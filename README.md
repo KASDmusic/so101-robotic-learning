@@ -1,1 +1,1 @@
-# so101-robot-reinforcement-learning
+# so101-robotic-learning

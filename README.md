@@ -1,6 +1,6 @@
 # so101-robotic-learning
 
-![mujoco](img/mujoco.png)
+![mujoco](img/mujoco_1.gif)
 
 -------
 

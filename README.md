@@ -71,20 +71,5 @@
 │       │
 │       └── __init__.py
 │
-├── scripts/
-│   ├── train_sim.py
-│   ├── eval_sim.py
-│   ├── play_policy.py
-│   ├── record_video.py
-│   └── run_real_robot.py
-│
 ├── notebooks/
-├── checkpoints/
-├── runs/
-├── videos/
-│
-└── tests/
-    ├── test_env.py
-    ├── test_rewards.py
-    └── test_randomization.py
 ```

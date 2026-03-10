@@ -12,18 +12,6 @@
 ├── .gitignore
 │
 ├── assets/                     # Tout ce qui est physique
-│   ├── mjcf/
-│   │   ├── so101/
-│   │   │   ├── robot.xml
-│   │   │   ├── actuators.xml
-│   │   │   └── scene.xml
-│   │   │
-│   │   ├── ball.xml
-│   │   ├── racket.xml
-│   │   └── materials.xml
-│   │
-│   └── meshes/
-│
 ├── img/
 ├── notebooks/
 |

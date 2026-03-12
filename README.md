@@ -2,7 +2,7 @@
 
 <div align="center" style="max-width:900px; margin:auto;">
 
-<img src="img/global_mujoco.gif" width="100%">
+<img src="img/global_mujoco.GIF" width="100%">
 <p>Env mujoco</p>
 
 <table align="center" width="100%">

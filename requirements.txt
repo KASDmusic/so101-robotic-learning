@@ -1,0 +1,10 @@
+numpy
+opencv-python
+torch
+torchvision
+mujoco
+gymnasium
+scipy
+matplotlib
+imageio
+imageio[ffmpeg]

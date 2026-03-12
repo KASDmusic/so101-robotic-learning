@@ -1,8 +1,35 @@
 # so101-robotic-learning
 
-![mujoco](img/mujoco_1.gif)
+<div align="center" style="max-width:900px; margin:auto;">
 
--------
+<img src="img/global_mujoco.gif" width="100%">
+<p>Env mujoco</p>
+
+<table align="center" width="100%">
+  <tr>
+  <td align="center" width="50%">
+    <img src="img/episode_0010.gif" width="100%"><br>
+    fov 60
+  </td>
+
+  <td align="center" width="50%">
+    <img src="img/episode_0520.gif" width="100%"><br>
+    fov 100
+    </td>
+</tr>
+</table>
+
+</div>
+
+## TODO
+
+- [x] package setup (requirements.txt);
+- [x] Refactoring code (rename env en bounce_env + cleaner train.py et rewards.py);
+- [ ] push
+- [ ] maj readme.txt
+- [ ] push
+- [ ] tensorboard;
+
 
 ## Arborescence
 
@@ -60,3 +87,13 @@
        │
        └── __init__.py
 ```
+
+## Setup environnement
+
+```
+conda env create -f environment.yml
+```
+
+## Bounce_rl
+
+

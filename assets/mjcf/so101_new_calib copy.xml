@@ -2,7 +2,7 @@
 <!-- Generated using onshape-to-robot -->
 <!-- Onshape https://cad.onshape.com/documents/7715cc284bb430fe6dab4ffd/w/4fd0791b683777b02f8d975a/e/826c553ede3b7592eb9ca800 -->
 <mujoco model="so101_new_calib">
-  <option timestep="0.001" impratio="10"/>
+  <option timestep="0.002" impratio="10"/>
   <compiler angle="radian" meshdir="../../assets" autolimits="true"/>
   <default>
     <default class="so101_new_calib">
@@ -63,21 +63,16 @@
        specular="0 0 0"/>
 
     <!-- Balle de ping-pong -->
+    <!-- Source : https://pmc.ncbi.nlm.nih.gov/articles/PMC11025803/ -->
     <body name="ball" pos="0.5 0 0.5">
       <freejoint/>
       <geom name="ball"
-      type="sphere"
-      size=".02"
-      mass=".003"
-      friction="0.05 0.002 0.0001"
-      solref="0.01 0.03"
-      solimp="0.95 0.99 0.0005"/>
-
-
-      <body name="ballast">
-        <joint type="ball" stiffness="0.1" damping=".0001"/>
-        <geom name="ballast" type="sphere" size=".02" contype="0" conaffinity="0" mass=".01" group="3"/>
-      </body>
+            type="sphere"
+            size="0.02"
+            mass="0.003"
+            friction="0.002 0.0001 0.0001"
+            solref="-60000 -100"
+            solimp="0.99 0.999 0.0001"/>
     </body>
 
 
@@ -154,6 +149,9 @@
                 
 
                 <body name="paddle_mount" quat="0 1 0 0">
+                  <site name="paddle_x" pos="0.03 0 0" size="0.01" rgba="1 0 0 1"/>
+                  <site name="paddle_y" pos="0 0.03 0" size="0.01" rgba="0 1 0 1"/>
+                  <site name="paddle_z" pos="0 0 0.03" size="0.01" rgba="0 0 1 1"/>
                   <inertial pos="0 0 0" mass="0.17" diaginertia="0.0002 0.0002 0.0001"/>
 
                   <!-- VISUEL -->
@@ -176,7 +174,7 @@
                 <camera name="gripper_cam"
                         pos="0 0.06 -0.025"
                         quat="0.9848 -0.1736 0 0"
-                        fovy="70"/>
+                        fovy="100"/>
 
                 <!-- petit repère pour voir où elle pointe -->
                 <site name="gripper_cam_target"

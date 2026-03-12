@@ -1,0 +1,6 @@
+name: so101-robotic-learning
+dependencies:
+  - python=3.10
+  - pip
+  - pip:
+      - -r requirements.txt

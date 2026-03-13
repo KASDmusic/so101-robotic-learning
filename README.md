@@ -25,7 +25,7 @@
 
 - [x] package setup (requirements.txt);
 - [x] Refactoring code (rename env en bounce_env + cleaner train.py et rewards.py);
-- [ ] push
+- [x] push
 - [ ] maj readme.txt
 - [ ] push
 - [ ] tensorboard;
@@ -96,4 +96,6 @@ conda env create -f environment.yml
 
 ## Bounce_rl
 
-
+|   |  REINFORCE | Q-learning  | PPO  |  SAC |
+|---|---|---|---|---|
+|  **PingPongReward** | 32  | 40  | 120  | 150  |

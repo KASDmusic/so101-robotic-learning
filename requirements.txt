@@ -8,3 +8,5 @@ scipy
 matplotlib
 imageio
 imageio[ffmpeg]
+stable_baselines3
+tensorboard

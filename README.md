@@ -21,6 +21,8 @@
 
 </div>
 
+<!---
+
 ## TODO
 
 - [x] package setup (requirements.txt);
@@ -29,7 +31,6 @@
 - [ ] maj readme.txt
 - [ ] push
 - [ ] tensorboard;
-
 
 ## Arborescence
 
@@ -88,6 +89,8 @@
        └── __init__.py
 ```
 
+-->
+
 ## Setup environnement
 
 ```
@@ -95,6 +98,14 @@ conda env create -f environment.yml
 ```
 
 ## Bounce_rl
+
+Bounce_rl consist to 
+
+### Rewards
+
+**PingPongReward** : Multi objective reward.
+
+### Benchmark
 
 |   |  REINFORCE | Q-learning  | PPO  |  SAC |
 |---|---|---|---|---|

@@ -95,6 +95,7 @@
 
 ```
 conda env create -f environment.yml
+conda activate so101-robotic-learning
 ```
 
 ## Bounce_rl

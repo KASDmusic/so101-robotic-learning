@@ -222,6 +222,8 @@ class BounceEnv(gym.Env):
 
     def step(self, action):
 
+        t0 = time.time()
+
         # Rescale action de [-1, 1] à la plage de contrôle de MuJoCo
         ctrl_range = self.model.actuator_ctrlrange
         actions_rescaled = np.clip(action, -1, 1)  # sécurité
@@ -242,6 +244,8 @@ class BounceEnv(gym.Env):
         terminated = False
         truncated = False
         info = reward_info
+
+        print(f"[Step] time={time.time() - t0:.3f}s | reward={reward:.3f}")
 
         return obs, reward, terminated, truncated, info
 

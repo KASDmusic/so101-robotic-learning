@@ -3,3 +3,5 @@ __pycache__/
 notebooks/.ipynb_checkpoints/
 videos/
 runs/
+videos_sb3_test/
+models/

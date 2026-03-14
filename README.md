@@ -8,13 +8,13 @@
 <table align="center" width="100%">
   <tr>
   <td align="center" width="50%">
-    <img src="img/episode_0010.gif" width="100%"><br>
-    fov 60
+    <img src="img/ppo.gif" width="100%"><br>
+    PPO raquette droite
   </td>
 
   <td align="center" width="50%">
-    <img src="img/episode_0520.gif" width="100%"><br>
-    fov 100
+    <img src="img/ppo.gif" width="100%"><br>
+    PPO raquette droite
     </td>
 </tr>
 </table>
@@ -31,6 +31,8 @@
 - [ ] maj readme.txt
 - [ ] push
 - [ ] tensorboard;
+- [ ] Log temps exec chaque étape PPO;
+- [ ] Corriger reward (séparer en une reward par evaluation).
 
 ## Arborescence
 
@@ -98,16 +100,27 @@ conda env create -f environment.yml
 conda activate so101-robotic-learning
 ```
 
-## Bounce_rl
+## Environnements
 
-Bounce_rl consist to 
+### bounce_rl
 
-### Rewards
+**bounce_rl** consists of a reinforcement learning environment designed around a bouncing-ball and paddle setup. The goal is to train an agent to control the paddle so as to maintain a stable and continuous bouncing behavior of the ball.
 
-**PingPongReward** : Multi objective reward.
+#### *Rewards*
 
-### Benchmark
+
+- **PaddleParallelReward** : Evaluate if the paddle is parallel with the floor.
+- **BallVerticalReward** : Evaluate if the ball’s velocity vector is perpendicular to the ground.
+- **BallSpeedReward** : Evaluate if the ball’s velocity vector is close to a constent.
+- **BallBelowPaddle** : Evaluate if the ball is bellow the paddle.
+- **PingPongReward** : A multi-objective reward that combines several criteria.
+
+#### *Benchmark*
 
 |   |  REINFORCE | Q-learning  | PPO  |  SAC |
 |---|---|---|---|---|
-|  **PingPongReward** | 32  | 40  | 120  | 150  |
+| **PaddleParallelReward** | 32  | 40  | 120  | 150  |
+| **BallVerticalReward**  | 32  | 40  | 120  | 150  |
+| **BallSpeedReward** | 32  | 40  | 120  | 150  |
+| **BallBelowPaddle** | 32  | 40  | 120  | 150  |
+| **PingPongReward** | 32  | 40  | 120  | 150  |

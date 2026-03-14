@@ -110,7 +110,7 @@ def train():
     model = PPO(
         policy="MultiInputPolicy",
         env=train_env,
-        learning_rate=3e-4,
+        learning_rate=3e-3,
         n_steps=1024,
         batch_size=64,
         n_epochs=10,
@@ -129,12 +129,12 @@ def train():
     video_callback = EpisodeVideoCallback(
         eval_env=eval_env,
         video_dir=video_dir,
-        video_every=10,
-        max_steps=50,
+        video_every=2,
+        max_steps=1024,
         verbose=1,
     )
 
-    total_timesteps = 200_000
+    total_timesteps = 20_000
     model.learn(total_timesteps=total_timesteps, callback=video_callback)
 
     model_path = model_dir / "ppo_bounce"
@@ -180,5 +180,5 @@ def test(model_path=None, n_episodes=5, max_steps=50):
 
 
 if __name__ == "__main__":
-    train()
-    # test()
+    #train()
+    test()

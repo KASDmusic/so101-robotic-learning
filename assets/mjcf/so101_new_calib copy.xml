@@ -2,7 +2,17 @@
 <!-- Generated using onshape-to-robot -->
 <!-- Onshape https://cad.onshape.com/documents/7715cc284bb430fe6dab4ffd/w/4fd0791b683777b02f8d975a/e/826c553ede3b7592eb9ca800 -->
 <mujoco model="so101_new_calib">
-  <option timestep="0.002" impratio="10"/>
+
+  <!-- <option timestep="0.002" impratio="10"/> -->
+
+  <option timestep="0.002"
+        solver="Newton"
+        iterations="20"
+        ls_iterations="10"
+        tolerance="1e-6"
+        impratio="2"
+        cone="pyramidal"/>
+
   <compiler angle="radian" meshdir="../../assets" autolimits="true"/>
   <default>
     <default class="so101_new_calib">
@@ -12,7 +22,9 @@
         <geom type="mesh" contype="0" conaffinity="0" group="2"/>
       </default>
       <default class="collision">
-        <geom group="3"/>
+        <geom group="3"
+        contype="0"
+        conaffinity="0"/>
       </default>
     </default>
   </default>
@@ -33,6 +45,10 @@
     </default>
   </default>
   <worldbody>
+
+    <site name="x" pos="0.03 0 0" size="0.01" rgba="1 0 0 1"/>
+    <site name="y" pos="0 0.03 0" size="0.01" rgba="0 1 0 1"/>
+    <site name="z" pos="0 0 0.03" size="0.01" rgba="0 0 1 1"/>
 
     <geom type="plane"
       size="3 3 0.1"
@@ -72,7 +88,9 @@
             mass="0.003"
             friction="0.002 0.0001 0.0001"
             solref="-60000 -100"
-            solimp="0.99 0.999 0.0001"/>
+            solimp="0.99 0.999 0.0001"
+            contype="1"
+            conaffinity="1"/>
     </body>
 
 

@@ -17,11 +17,9 @@ class BallVerticalReward:
 
     def __init__(
         self,
-        model: mujoco.MjModel,
         ball_body_name: str = "ball",
     ):
         self.ball_body_name = ball_body_name
-        self.ball_body_id = get_body_id_or_raise(model, ball_body_name)
         self.world_up = np.array([0.0, 0.0, 1.0], dtype=np.float64)
 
     def compute(
@@ -29,7 +27,10 @@ class BallVerticalReward:
         model: mujoco.MjModel,
         data: mujoco.MjData,
     ) -> tuple[float, dict]:
-        ball_vel = get_body_linear_velocity_world(model, data, self.ball_body_id)
+        
+        ball_body_id = get_body_id_or_raise(model, self.ball_body_name)
+
+        ball_vel = get_body_linear_velocity_world(model, data, ball_body_id)
         ball_speed = float(np.linalg.norm(ball_vel))
         ball_vel_dir = safe_normalize(ball_vel)
 

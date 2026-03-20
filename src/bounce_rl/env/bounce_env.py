@@ -6,8 +6,6 @@ import numpy as np
 import mujoco
 import mujoco.viewer
 
-from ..rewards.rewards import PingPongReward
-
 
 class BounceEnv(gym.Env):
     """
@@ -29,6 +27,8 @@ class BounceEnv(gym.Env):
     def __init__(
         self,
         xml_path: str,
+        reward=None,
+        max_episode_steps: int = 1024,
         camera_name: str = "gripper_cam",
         width: int = 320,
         height: int = 240,
@@ -37,7 +37,7 @@ class BounceEnv(gym.Env):
         camera_fps: int = 30,
         paddle_color=(0.9, 0.05, 0.05, 1),
         ball_mass: float = 0.003,
-        render_mode: str | None = None,
+        render_mode: str | None = None
     ):
         super().__init__()
 
@@ -47,12 +47,17 @@ class BounceEnv(gym.Env):
                 f"Modes supportés: {self.metadata['render_modes']}"
             )
 
+        self.xml_path = xml_path
+        self.reward = reward
+        self.max_episode_steps = int(max_episode_steps)
         self.render_mode = render_mode
         self.camera_name = camera_name
         self.width = width
         self.height = height
         self.frame_skip = int(frame_skip)
         self.mujoco_step_periode = float(mujoco_step_periode)
+
+        self.step_count = 0
 
         # Caméra RGB throttlée sur temps simulé
         self.camera_fps = float(camera_fps)
@@ -80,8 +85,11 @@ class BounceEnv(gym.Env):
                 "image": spaces.Box(
                     low=0, high=255, shape=(height, width, 3), dtype=np.uint8
                 ),
+                "last_image": spaces.Box(
+                    low=0, high=255, shape=(height, width, 3), dtype=np.uint8
+                ),
                 "state": spaces.Box(
-                    low=-np.inf, high=np.inf, shape=(state_dim,), dtype=np.float32
+                    low=-np.inf, high=np.inf, shape=(state_dim*2,), dtype=np.float32
                 ),
             }
         )
@@ -97,24 +105,12 @@ class BounceEnv(gym.Env):
         self._set_ball_mass(ball_mass)
 
         # Dernière image rendue
+        self._prev_state = np.zeros(self.model.nq + self.model.nv, dtype=np.float32)
+        self._prev_image = np.zeros((height, width, 3), dtype=np.uint8)
         self._last_image = np.zeros((height, width, 3), dtype=np.uint8)
 
         # Buffer des frames pour render_mode="rgb_array_list"
         self._rendered_frames = []
-
-        self.reward_fn = PingPongReward(
-            self.model,
-            ball_body_name="ball",
-            paddle_body_name="paddle_mount",
-            target_ball_speed=2.0,
-            speed_sigma=0.5,
-            w_paddle_parallel=1.0,
-            w_ball_vertical=0,
-            w_ball_speed=0,
-            w_ball_below_paddle=0,
-            below_paddle_margin=0.05,
-            paddle_normal_local=(0.0, -1.0, 0.0),  # à ajuster si besoin
-        )
 
     # -------------------------
     # Paramètres dynamiques
@@ -187,7 +183,13 @@ class BounceEnv(gym.Env):
 
     def _get_obs(self):
         self._maybe_update_camera()
-        return {"image": self._last_image, "state": self._get_state()}
+        current_state = self._get_state()
+        obs = {
+            "image": self._last_image.copy(),
+            "last_image": self._prev_image.copy(),
+            "state": np.concatenate([self._prev_state, current_state], axis=0).astype(np.float32),
+        }
+        return obs
 
     # -------------------------
     # Reset / Step
@@ -195,15 +197,11 @@ class BounceEnv(gym.Env):
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
         self.next_frame_time = 0.0
+        self.step_count = 0
         self._rendered_frames = []
 
         mujoco.mj_resetData(self.model, self.data)
 
-        # Optionnel: randomiser la balle
-        #if self.model.nq >= 7:
-        #    self.data.qpos[0:3] = np.array([0.5, np.random.uniform(-0.2, 0.2), 2.0])
-
-        # IMPORTANT pour actuateurs position: aligner ctrl avec la pose
         for act_id in range(self.model.nu):
             joint_id = self.model.actuator_trnid[act_id, 0]
             qpos_index = self.model.jnt_qposadr[joint_id]
@@ -211,9 +209,20 @@ class BounceEnv(gym.Env):
 
         mujoco.mj_forward(self.model, self.data)
 
-        # Première image immédiate
         self.next_frame_time = self.data.time
-        obs = self._get_obs()
+        self._maybe_update_camera()
+
+        current_state = self._get_state()
+
+        # au reset, on duplique l'observation courante comme "précédente"
+        self._prev_state = current_state.copy()
+        self._prev_image = self._last_image.copy()
+
+        obs = {
+            "image": self._last_image.copy(),
+            "last_image": self._prev_image.copy(),
+            "state": np.concatenate([self._prev_state, current_state], axis=0).astype(np.float32),
+        }
 
         if self.render_mode == "human":
             self._sync_human_viewer()
@@ -221,32 +230,59 @@ class BounceEnv(gym.Env):
         return obs, {}
 
     def step(self, action):
-
+        self.step_count += 1
         t0 = time.time()
 
-        # Rescale action de [-1, 1] à la plage de contrôle de MuJoCo
         ctrl_range = self.model.actuator_ctrlrange
-        actions_rescaled = np.clip(action, -1, 1)  # sécurité
-        actions_rescaled = 0.5 * (actions_rescaled + 1.0) * (ctrl_range[:, 1] - ctrl_range[:, 0]) + ctrl_range[:, 0]
-
+        actions_rescaled = np.clip(action, -1, 1)
+        actions_rescaled = (
+            0.5 * (actions_rescaled + 1.0) * (ctrl_range[:, 1] - ctrl_range[:, 0])
+            + ctrl_range[:, 0]
+        )
         self.data.ctrl[:] = np.asarray(actions_rescaled, dtype=np.float32)
 
         for _ in range(self.frame_skip):
             mujoco.mj_step(self.model, self.data)
             self._maybe_update_camera()
 
-        obs = self._get_obs()
+        current_image = self._last_image.copy()
+        current_state = self._get_state()
+
+        obs = {
+            "image": current_image,
+            "last_image": self._prev_image.copy(),
+            "state": np.concatenate([self._prev_state, current_state], axis=0).astype(np.float32),
+        }
+
+        # mise à jour pour le prochain step
+        self._prev_state = current_state.copy()
+        self._prev_image = current_image.copy()
 
         if self.render_mode == "human":
             self._sync_human_viewer()
 
-        reward, reward_info = self.reward_fn.compute(self.model, self.data)
+        if self.reward is not None:
+            reward, reward_info = self.reward.compute(self.model, self.data)
+        else:
+            reward = 0.0
+            reward_info = {}
+
         terminated = False
         truncated = False
+
+        body_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, "ball")
+        if body_id != -1:
+            ball_height = self.data.xpos[body_id, 2]
+            if ball_height < 0.1:
+                terminated = True
+
+        if self.step_count >= self.max_episode_steps:
+            truncated = True
+            self.step_count = 0
+
         info = reward_info
 
         print(f"[Step] time={time.time() - t0:.3f}s | reward={reward:.3f}")
-
         return obs, reward, terminated, truncated, info
 
     def render(self):

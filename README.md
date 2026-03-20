@@ -2,7 +2,7 @@
 
 <div align="center" style="max-width:900px; margin:auto;">
 
-<img src="img/global_mujoco.GIF" width="100%">
+<img src="img/ppo_past_states.gif" width="100%">
 <p>Env mujoco</p>
 
 <table align="center" width="100%">
@@ -13,8 +13,8 @@
   </td>
 
   <td align="center" width="50%">
-    <img src="img/ppo.gif" width="100%"><br>
-    PPO raquette droite
+    <img src="img/pseudo_rebond.gif" width="100%"><br>
+    PPO ball on paddle + upper the paddle
     </td>
 </tr>
 </table>
@@ -25,14 +25,15 @@
 
 ## TODO
 
-- [x] package setup (requirements.txt);
-- [x] Refactoring code (rename env en bounce_env + cleaner train.py et rewards.py);
-- [x] push
+- [x] Enregistrer checkpoints model (best_reward)
+- [x] Faire en sorte que les entrainement puisse être lancés depuis un notebook (passer en paramètre fichier de config)
+- [x] Ajouter etat précédent dans observations env;
+- [ ] Cleaner fichiers train (evolutif, multi env, etc)
+- [ ] Ajouter variations initialisation env;
+- [ ] Tester entrainement avec muli env simultané; 
+- [ ] Supprimer les informations non relatives au bras (balle par ex)
+- [ ] Optimiser execution env ? (tester enlever mesh collision raquette et/ou mesh bras pour voir si grand impact + voir si autres optimisations)
 - [ ] maj readme.txt
-- [ ] push
-- [ ] tensorboard;
-- [ ] Log temps exec chaque étape PPO;
-- [ ] Corriger reward (séparer en une reward par evaluation).
 
 ## Arborescence
 
@@ -108,11 +109,16 @@ conda activate so101-robotic-learning
 
 #### *Rewards*
 
+##### *Solo*
+
 
 - **PaddleParallelReward** : Evaluate if the paddle is parallel with the floor.
 - **BallVerticalReward** : Evaluate if the ball’s velocity vector is perpendicular to the ground.
 - **BallSpeedReward** : Evaluate if the ball’s velocity vector is close to a constent.
 - **BallBelowPaddle** : Evaluate if the ball is bellow the paddle.
+
+##### *Combination*
+
 - **PingPongReward** : A multi-objective reward that combines several criteria.
 
 #### *Benchmark*

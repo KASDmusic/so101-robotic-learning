@@ -1,7 +1,7 @@
-from stable_baselines3 import PPO
+from stable_baselines3 import SAC
 from stable_baselines3.common.monitor import Monitor
 
-from rl_utils import (
+from .rl_utils import (
     EpisodeVideoCallback,
     SaveBestModelCallback,
     add_src_to_path,
@@ -10,58 +10,53 @@ from rl_utils import (
     get_root_from_cwd,
     print_env_spaces,
     save_video,
+    validate_continuous_action_space,
 )
 
 ROOT = get_root_from_cwd(levels_up=3)
 add_src_to_path(ROOT)
 
 from bounce_rl.env.bounce_env import BounceEnv
-from bounce_rl.rewards.reward_ball_aligned_on_z_and_above_paddle import (
-    BallAlignedOnZAndAbovePaddleReward,
-)
 
 
-def make_env(render_mode=None, xml_path=None, reward=None):
-    reward = BallAlignedOnZAndAbovePaddleReward() if reward is None else reward
-
+def make_env(render_mode=None, xml_path=None):
     env = BounceEnv(
         xml_path=str(ROOT / "assets" / "mjcf" / "so101_new_calib copy.xml") if xml_path is None else xml_path,
         render_mode=render_mode,
-        reward=reward,
     )
     env = Monitor(env)
     return env
 
 
-def train(xml_path=None, reward=None):
-    train_env = make_env(render_mode=None, xml_path=xml_path, reward=reward)
-    eval_env = make_env(render_mode="rgb_array_list", xml_path=xml_path, reward=reward)
+def train(xml_path=None):
+    train_env = make_env(render_mode=None, xml_path=xml_path)
+    eval_env = make_env(render_mode="rgb_array_list", xml_path=xml_path)
 
     print_env_spaces(train_env)
+    validate_continuous_action_space(train_env)
 
-    video_dir = ROOT / "videos_sb3"
+    video_dir = ROOT / "videos_sac"
     model_dir = ROOT / "models"
-    run_dir = ROOT / "runs" / "ppo_bounce"
+    run_dir = ROOT / "runs" / "sac_bounce"
     ensure_dirs(video_dir, model_dir, run_dir)
 
     policy_kwargs = dict(
-        net_arch=dict(pi=[128, 64], vf=[128, 64]),
-        # normalize_images=False,
+        net_arch=dict(pi=[256, 256], qf=[256, 256]),
+        normalize_images=False,
     )
 
-    model = PPO(
+    model = SAC(
         policy="MultiInputPolicy",
         env=train_env,
         learning_rate=3e-4,
-        n_steps=15,
+        buffer_size=3_000,
+        learning_starts=1_000,
         batch_size=64,
-        n_epochs=10,
+        tau=0.005,
         gamma=0.99,
-        gae_lambda=0.95,
-        clip_range=0.2,
-        ent_coef=0.01,
-        vf_coef=0.5,
-        max_grad_norm=0.5,
+        train_freq=1,
+        gradient_steps=1,
+        ent_coef="auto",
         policy_kwargs=policy_kwargs,
         verbose=1,
         tensorboard_log=str(run_dir),
@@ -78,7 +73,7 @@ def train(xml_path=None, reward=None):
 
     best_model_callback = SaveBestModelCallback(
         eval_env=eval_env,
-        save_path=model_dir / "ppo_bounce_best",
+        save_path=model_dir / "sac_bounce_best",
         eval_every_episodes=10,
         n_eval_episodes=3,
         max_steps=1024,
@@ -91,7 +86,7 @@ def train(xml_path=None, reward=None):
     total_timesteps = 20_000
     model.learn(total_timesteps=total_timesteps, callback=callbacks)
 
-    model_path = model_dir / "ppo_bounce_last"
+    model_path = model_dir / "sac_bounce_last"
     model.save(str(model_path))
     print(f"Modèle final sauvegardé dans : {model_path}.zip")
 
@@ -100,14 +95,14 @@ def train(xml_path=None, reward=None):
 
 
 def test(model_path=None, n_episodes=5, max_steps=1024):
-    env = make_env(render_mode="human")
+    env = make_env(render_mode="rgb_array_list")
 
     if model_path is None:
-        model_path = ROOT / "models" / "ppo_bounce_best.zip"
+        model_path = ROOT / "models" / "sac_bounce_best.zip"
 
-    model = PPO.load(str(model_path))
+    model = SAC.load(str(model_path))
 
-    video_dir = ROOT / "videos_sb3_test"
+    video_dir = ROOT / "videos_sac_test"
     ensure_dirs(video_dir)
 
     for ep in range(n_episodes):
@@ -138,5 +133,5 @@ def test(model_path=None, n_episodes=5, max_steps=1024):
 
 
 if __name__ == "__main__":
-    #train()
-    test(model_path = ROOT / "models" / "ppo_bounce_best.zip")
+    train()
+    # test()

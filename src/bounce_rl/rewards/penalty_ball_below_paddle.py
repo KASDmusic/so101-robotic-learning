@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import mujoco
 
-from reward_utils import (
+from .reward_utils import (
     get_body_position_world,
     get_body_id_or_raise,
 )
@@ -16,7 +16,6 @@ class BallBelowPaddlePenalty:
 
     def __init__(
         self,
-        model: mujoco.MjModel,
         ball_body_name: str = "ball",
         paddle_body_name: str = "paddle_mount",
         below_paddle_margin: float = 0.05,
@@ -28,22 +27,22 @@ class BallBelowPaddlePenalty:
             raise ValueError("below_paddle_margin doit être > 0.")
         self.below_paddle_margin = float(below_paddle_margin)
 
-        self.ball_body_id = get_body_id_or_raise(model, ball_body_name)
-        self.paddle_body_id = get_body_id_or_raise(model, paddle_body_name)
-
     def compute(
         self,
         model: mujoco.MjModel,
         data: mujoco.MjData,
     ) -> tuple[float, dict]:
-        ball_pos = get_body_position_world(data, self.ball_body_id)
-        paddle_pos = get_body_position_world(data, self.paddle_body_id)
+        ball_pos = get_body_position_world(data, get_body_id_or_raise(model, self.ball_body_name))
+        paddle_pos = get_body_position_world(data, get_body_id_or_raise(model, self.paddle_body_name))
 
         ball_height = float(ball_pos[2])
         paddle_height = float(paddle_pos[2])
 
         below_depth = max(0.0, paddle_height - ball_height)
         penalty = min(1.0, below_depth / self.below_paddle_margin)
+        penalty = -penalty  # pénalité négative
+
+        print(f"Ball height: {ball_height:.3f}, Paddle height: {paddle_height:.3f}")
 
         info = {
             "penalty_ball_below_paddle": penalty,

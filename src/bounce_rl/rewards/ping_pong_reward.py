@@ -11,13 +11,6 @@ from penalty_ball_below_paddle import BallBelowPaddlePenalty
 class PingPongReward:
     """
     Regroupe plusieurs rewards/penalties avec combinaison pondérée.
-
-    Reward totale =
-        w_paddle_parallel * reward_paddle_parallel
-      + w_ball_vertical   * reward_ball_vertical
-      + w_ball_speed      * reward_ball_speed
-      - w_ball_below_paddle * penalty_ball_below_paddle
-      + alive_bonus
     """
 
     def __init__(
@@ -42,25 +35,21 @@ class PingPongReward:
         self.alive_bonus = float(alive_bonus)
 
         self.paddle_parallel_reward = PaddleParallelReward(
-            model=model,
             paddle_body_name=paddle_body_name,
             paddle_normal_local=paddle_normal_local,
         )
 
         self.ball_vertical_reward = BallVerticalReward(
-            model=model,
             ball_body_name=ball_body_name,
         )
 
         self.ball_speed_reward = BallSpeedReward(
-            model=model,
             ball_body_name=ball_body_name,
             target_ball_speed=target_ball_speed,
             speed_sigma=speed_sigma,
         )
 
         self.ball_below_paddle_penalty = BallBelowPaddlePenalty(
-            model=model,
             ball_body_name=ball_body_name,
             paddle_body_name=paddle_body_name,
             below_paddle_margin=below_paddle_margin,
@@ -80,7 +69,7 @@ class PingPongReward:
             self.w_paddle_parallel * paddle_parallel_score
             + self.w_ball_vertical * ball_vertical_score
             + self.w_ball_speed * ball_speed_score
-            - self.w_ball_below_paddle * ball_below_penalty
+            + self.w_ball_below_paddle * ball_below_penalty
             + self.alive_bonus
         )
 

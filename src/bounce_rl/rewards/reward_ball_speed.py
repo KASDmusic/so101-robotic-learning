@@ -17,13 +17,11 @@ class BallSpeedReward:
 
     def __init__(
         self,
-        model: mujoco.MjModel,
         ball_body_name: str = "ball",
         target_ball_speed: float = 2.0,
         speed_sigma: float = 0.5,
     ):
         self.ball_body_name = ball_body_name
-        self.ball_body_id = get_body_id_or_raise(model, ball_body_name)
 
         self.target_ball_speed = float(target_ball_speed)
         self.speed_sigma = float(speed_sigma)
@@ -33,7 +31,10 @@ class BallSpeedReward:
         model: mujoco.MjModel,
         data: mujoco.MjData,
     ) -> tuple[float, dict]:
-        ball_vel = get_body_linear_velocity_world(model, data, self.ball_body_id)
+        
+        ball_body_id = get_body_id_or_raise(model, self.ball_body_name)
+
+        ball_vel = get_body_linear_velocity_world(model, data, ball_body_id)
         ball_speed = float(np.linalg.norm(ball_vel))
 
         score = gaussian_reward(

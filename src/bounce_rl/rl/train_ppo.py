@@ -2,10 +2,8 @@ from stable_baselines3 import PPO
 from stable_baselines3.common.monitor import Monitor
 
 from rl_utils import (
-    EpisodeVideoCallback,
-    SaveBestModelCallback,
+    EvalVideoSaveBestCallback,
     add_src_to_path,
-    build_default_callbacks,
     ensure_dirs,
     get_root_from_cwd,
     print_env_spaces,
@@ -21,11 +19,11 @@ from bounce_rl.rewards.reward_ball_aligned_on_z_and_above_paddle import (
 )
 
 
-def make_env(render_mode=None, xml_path=None, reward=None):
-    reward = BallAlignedOnZAndAbovePaddleReward() if reward is None else reward
+def make_env(render_mode=None):
+    reward = BallAlignedOnZAndAbovePaddleReward()
 
     env = BounceEnv(
-        xml_path=str(ROOT / "assets" / "mjcf" / "so101_new_calib copy.xml") if xml_path is None else xml_path,
+        xml_path=str(ROOT / "assets" / "mjcf" / "so101_new_calib copy.xml"),
         render_mode=render_mode,
         reward=reward,
     )
@@ -33,9 +31,9 @@ def make_env(render_mode=None, xml_path=None, reward=None):
     return env
 
 
-def train(xml_path=None, reward=None):
-    train_env = make_env(render_mode=None, xml_path=xml_path, reward=reward)
-    eval_env = make_env(render_mode="rgb_array_list", xml_path=xml_path, reward=reward)
+def train():
+    train_env = make_env(render_mode=None)
+    eval_env = make_env(render_mode="rgb_array_list")
 
     print_env_spaces(train_env)
 
@@ -68,28 +66,20 @@ def train(xml_path=None, reward=None):
         device="auto",
     )
 
-    video_callback = EpisodeVideoCallback(
+    eval_callback = EvalVideoSaveBestCallback(
         eval_env=eval_env,
+        best_model_path=model_dir / "ppo_bounce_best",
         video_dir=video_dir,
-        video_every=10,
-        max_steps=1024,
-        verbose=1,
-    )
-
-    best_model_callback = SaveBestModelCallback(
-        eval_env=eval_env,
-        save_path=model_dir / "ppo_bounce_best",
         eval_every_episodes=10,
         n_eval_episodes=3,
         max_steps=1024,
         deterministic=True,
+        save_video=True,
         verbose=1,
     )
 
-    callbacks = build_default_callbacks(video_callback, best_model_callback)
-
     total_timesteps = 20_000
-    model.learn(total_timesteps=total_timesteps, callback=callbacks)
+    model.learn(total_timesteps=total_timesteps, callback=eval_callback)
 
     model_path = model_dir / "ppo_bounce_last"
     model.save(str(model_path))
@@ -139,4 +129,4 @@ def test(model_path=None, n_episodes=5, max_steps=1024):
 
 if __name__ == "__main__":
     train()
-    #test(model_path = ROOT / "models" / "ppo_bounce_best.zip")
+    # test()

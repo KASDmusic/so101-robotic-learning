@@ -138,5 +138,5 @@ def test(model_path=None, n_episodes=5, max_steps=1024):
 
 
 if __name__ == "__main__":
-    #train()
-    test(model_path = ROOT / "models" / "ppo_bounce_best.zip")
+    train()
+    #test(model_path = ROOT / "models" / "ppo_bounce_best.zip")

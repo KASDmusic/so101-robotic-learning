@@ -1,7 +1,7 @@
 from stable_baselines3 import PPO
 from stable_baselines3.common.monitor import Monitor
 
-from rl_utils import (
+from .rl_utils import (
     EvalVideoSaveBestCallback,
     add_src_to_path,
     ensure_dirs,
@@ -19,11 +19,11 @@ from bounce_rl.rewards.reward_ball_aligned_on_z_and_above_paddle import (
 )
 
 
-def make_env(render_mode=None):
+def make_env(xml_path, render_mode=None):
     reward = BallAlignedOnZAndAbovePaddleReward()
 
     env = BounceEnv(
-        xml_path=str(ROOT / "assets" / "mjcf" / "so101_new_calib copy.xml"),
+        xml_path=str(xml_path),
         render_mode=render_mode,
         reward=reward,
     )
@@ -31,9 +31,9 @@ def make_env(render_mode=None):
     return env
 
 
-def train():
-    train_env = make_env(render_mode=None)
-    eval_env = make_env(render_mode="rgb_array_list")
+def train(xml_path=ROOT / "assets" / "mjcf" / "so101_new_calib copy.xml"):
+    train_env = make_env(xml_path=xml_path, render_mode=None)
+    eval_env = make_env(xml_path=xml_path, render_mode="rgb_array_list")
 
     print_env_spaces(train_env)
 
@@ -44,7 +44,7 @@ def train():
 
     policy_kwargs = dict(
         net_arch=dict(pi=[128, 64], vf=[128, 64]),
-        # normalize_images=False,
+        normalize_images=False,
     )
 
     model = PPO(
@@ -89,8 +89,8 @@ def train():
     eval_env.close()
 
 
-def test(model_path=None, n_episodes=5, max_steps=1024):
-    env = make_env(render_mode="human")
+def test(xml_path=ROOT / "assets" / "mjcf" / "so101_new_calib copy.xml", model_path=None, n_episodes=5, max_steps=1024):
+    env = make_env(xml_path=xml_path, render_mode="human")
 
     if model_path is None:
         model_path = ROOT / "models" / "ppo_bounce_best.zip"

@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import mujoco
 
-from reward_paddle_parallel import PaddleParallelReward
-from reward_ball_vertical import BallVerticalReward
-from reward_ball_speed import BallSpeedReward
-from penalty_ball_below_paddle import BallBelowPaddlePenalty
+from .reward_paddle_parallel import PaddleParallelReward
+from .reward_ball_vertical import BallVerticalReward
+from .reward_ball_speed import BallSpeedReward
+from .penalty_ball_below_paddle import BallBelowPaddlePenalty
 
 
 class PingPongReward:

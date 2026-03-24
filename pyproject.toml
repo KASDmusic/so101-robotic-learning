@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "so101-robotic-learning"
+version = "0.1.0"
+description = "Robotic learning monorepo for SO101 projects"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "numpy",
+    "imageio",
+    "imageio[ffmpeg]",
+    "gymnasium",
+    "stable-baselines3",
+    "opencv-python",
+    "torch",
+    "torchvision",
+    "mujoco",
+    "scipy",
+    "matplotlib",
+    "stable_baselines3",
+    "tensorboard",
+    "ipykernel",
+]
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]

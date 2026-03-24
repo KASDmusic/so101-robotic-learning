@@ -1,50 +1,56 @@
+from pathlib import Path
+
 from stable_baselines3 import PPO
 from stable_baselines3.common.monitor import Monitor
+from stable_baselines3.common.vec_env import DummyVecEnv, VecTransposeImage
 
 from .rl_utils import (
     EvalVideoSaveBestCallback,
-    add_src_to_path,
     ensure_dirs,
-    get_root_from_cwd,
     print_env_spaces,
     save_video,
 )
 
-ROOT = get_root_from_cwd(levels_up=3)
-add_src_to_path(ROOT)
-
-from bounce_rl.env.bounce_env import BounceEnv
-from bounce_rl.rewards.reward_ball_aligned_on_z_and_above_paddle import (
+from so101_robotic_learning.bounce_rl.rewards.reward_ball_aligned_on_z_and_above_paddle import (
     BallAlignedOnZAndAbovePaddleReward,
 )
+from so101_robotic_learning.bounce_rl.env.bounce_env import BounceEnv
 
 
 def make_env(xml_path, render_mode=None):
-    reward = BallAlignedOnZAndAbovePaddleReward()
+    def _init():
+        reward = BallAlignedOnZAndAbovePaddleReward()
 
-    env = BounceEnv(
-        xml_path=str(xml_path),
-        render_mode=render_mode,
-        reward=reward,
-    )
-    env = Monitor(env)
-    return env
+        env = BounceEnv(
+            xml_path=str(xml_path),
+            render_mode=render_mode,
+            reward=reward,
+        )
+        env = Monitor(env)
+        return env
+
+    return _init
 
 
-def train(xml_path=ROOT / "assets" / "mjcf" / "so101_new_calib copy.xml"):
-    train_env = make_env(xml_path=xml_path, render_mode=None)
-    eval_env = make_env(xml_path=xml_path, render_mode="rgb_array_list")
+def train(xml_path, root):
+    root = Path(root)
+
+    train_env = DummyVecEnv([make_env(xml_path=xml_path, render_mode=None)])
+    train_env = VecTransposeImage(train_env)
+
+    eval_env = DummyVecEnv([make_env(xml_path=xml_path, render_mode="rgb_array_list")])
+    eval_env = VecTransposeImage(eval_env)
 
     print_env_spaces(train_env)
 
-    video_dir = ROOT / "videos_sb3"
-    model_dir = ROOT / "models"
-    run_dir = ROOT / "runs" / "ppo_bounce"
+    video_dir = root / "videos_sb3"
+    model_dir = root / "models"
+    run_dir = root / "runs" / "ppo_bounce"
     ensure_dirs(video_dir, model_dir, run_dir)
 
     policy_kwargs = dict(
         net_arch=dict(pi=[128, 64], vf=[128, 64]),
-        normalize_images=False,
+        normalize_images=True,
     )
 
     model = PPO(
@@ -89,15 +95,15 @@ def train(xml_path=ROOT / "assets" / "mjcf" / "so101_new_calib copy.xml"):
     eval_env.close()
 
 
-def test(xml_path=ROOT / "assets" / "mjcf" / "so101_new_calib copy.xml", model_path=None, n_episodes=5, max_steps=1024):
-    env = make_env(xml_path=xml_path, render_mode="human")
+def test(xml_path, root, model_path=None, n_episodes=5, max_steps=1024):
+    root = Path(root)
+    model_path = Path(model_path) if model_path is not None else root / "models" / "ppo_bounce_last.zip"
 
-    if model_path is None:
-        model_path = ROOT / "models" / "ppo_bounce_best.zip"
+    env = make_env(xml_path=xml_path, render_mode="human")()
 
     model = PPO.load(str(model_path))
 
-    video_dir = ROOT / "videos_sb3_test"
+    video_dir = root / "videos_sb3_test"
     ensure_dirs(video_dir)
 
     for ep in range(n_episodes):
@@ -125,8 +131,3 @@ def test(xml_path=ROOT / "assets" / "mjcf" / "so101_new_calib copy.xml", model_p
         )
 
     env.close()
-
-
-if __name__ == "__main__":
-    train()
-    # test()

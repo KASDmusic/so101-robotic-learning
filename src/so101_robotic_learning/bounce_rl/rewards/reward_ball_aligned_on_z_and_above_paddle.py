@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import numpy as np
 from tensorboard import data
-from bounce_rl.rewards.reward_paddle_parallel import PaddleParallelReward
 import mujoco
+
+from .reward_paddle_parallel import PaddleParallelReward
 
 from .reward_utils import get_body_id_or_raise
 

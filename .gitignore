@@ -7,3 +7,4 @@ videos_sb3/
 videos_sb3_test/
 videos_sac/
 models/
+*.egg-info

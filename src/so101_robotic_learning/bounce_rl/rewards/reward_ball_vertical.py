@@ -3,7 +3,7 @@ from __future__ import annotations
 import numpy as np
 import mujoco
 
-from reward_utils import (
+from .reward_utils import (
     safe_normalize,
     get_body_linear_velocity_world,
     get_body_id_or_raise,

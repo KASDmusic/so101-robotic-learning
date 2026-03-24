@@ -28,6 +28,8 @@
 - [x] Enregistrer checkpoints model (best_reward)
 - [x] Faire en sorte que les entrainement puisse être lancés depuis un notebook (passer en paramètre fichier de config)
 - [x] Ajouter etat précédent dans observations env;
+- [x] Régler problèmes import en fonction de l'endroit execution fichier;
+- [ ] Régler problème enregistrement vidéos;
 - [ ] Cleaner fichiers train (evolutif, multi env, etc)
 - [ ] Ajouter variations initialisation env;
 - [ ] Tester entrainement avec muli env simultané; 

@@ -65,42 +65,88 @@ def save_video(frames, output_path, fps=30):
     imageio.mimsave(output_path, safe_frames, fps=fps)
 
 
+def unwrap_first_env(env):
+    """
+    Récupère le premier environnement gym sous-jacent depuis une pile VecEnv/wrappers.
+    Compatible avec DummyVecEnv, VecTransposeImage, VecNormalize, etc.
+    """
+    current = env
+    visited = set()
+
+    while True:
+        if id(current) in visited:
+            break
+        visited.add(id(current))
+
+        if hasattr(current, "envs") and len(current.envs) > 0:
+            return current.envs[0]
+
+        if hasattr(current, "venv"):
+            current = current.venv
+            continue
+
+        if hasattr(current, "env"):
+            current = current.env
+            continue
+
+        break
+
+    return current
+
+
+def get_camera_fps(env, default=30):
+    base_env = unwrap_first_env(env)
+    return int(getattr(base_env.unwrapped, "camera_fps", default))
+
+
+def render_vecenv_frames(env):
+    """
+    Tente de récupérer les frames depuis le vrai env gym sous-jacent.
+    """
+    base_env = unwrap_first_env(env)
+    return base_env.render()
+
+
 def rollout_policy(model, env, max_steps=1024, deterministic=True, capture_video=False):
     """
-    Exécute un épisode d'évaluation.
+    Exécute un épisode d'évaluation sur un VecEnv SB3.
 
     Retourne un dict avec :
     - total_reward
     - episode_length
     - frames (si capture_video=True sinon None)
-    - terminated
-    - truncated
+    - done
     - elapsed_time
     """
-    obs, _ = env.reset()
+    obs = env.reset()
     total_reward = 0.0
     start_t = time.time()
 
+    done = False
+    step_idx = -1
+
     for step_idx in range(max_steps):
         action, _ = model.predict(obs, deterministic=deterministic)
-        obs, reward, terminated, truncated, _ = env.step(action)
-        total_reward += float(reward)
+        obs, rewards, dones, infos = env.step(action)
 
-        if terminated or truncated:
+        reward = float(rewards[0])
+        done = bool(dones[0])
+
+        total_reward += reward
+
+        if done:
             break
-    else:
-        terminated = False
-        truncated = False
-        step_idx = max_steps - 1
 
-    frames = env.render() if capture_video else None
+    if step_idx == -1:
+        step_idx = 0
+
+    frames = render_vecenv_frames(env) if capture_video else None
 
     return {
         "total_reward": total_reward,
         "episode_length": step_idx + 1,
         "frames": frames,
-        "terminated": terminated,
-        "truncated": truncated,
+        "done": done,
         "elapsed_time": time.time() - start_t,
     }
 
@@ -114,7 +160,7 @@ def evaluate_policy_on_env(
     record_video_first_episode=False,
 ):
     """
-    Évalue un modèle sur plusieurs épisodes.
+    Évalue un modèle sur plusieurs épisodes d'un VecEnv.
 
     Retourne :
     - mean_reward
@@ -161,12 +207,11 @@ def evaluate_policy_on_env(
 
 class EvalVideoSaveBestCallback(BaseCallback):
     """
-    Callback unifié qui, tous les `eval_every_episodes` épisodes terminés :
+    Callback unifié compatible VecEnv qui, tous les `eval_every_episodes`
+    épisodes terminés :
     - évalue le modèle sur `n_eval_episodes`
     - enregistre une vidéo du 1er épisode d'évaluation (optionnel)
     - sauvegarde le modèle si le score moyen est meilleur que le précédent best
-
-    Le score utilisé est la reward moyenne sur les épisodes d'évaluation.
     """
 
     def __init__(
@@ -203,11 +248,15 @@ class EvalVideoSaveBestCallback(BaseCallback):
         if dones is None:
             return True
 
-        if np.any(dones):
-            self.episode_count += 1
+        n_done = int(np.sum(dones))
+        if n_done > 0:
+            self.episode_count += n_done
 
             if self.verbose:
-                print(f"[Callback] épisode terminé détecté | count={self.episode_count}")
+                print(
+                    f"[Callback] épisode(s) terminé(s) détecté(s) | "
+                    f"+{n_done} | count={self.episode_count}"
+                )
 
             if self.episode_count % self.eval_every_episodes == 0:
                 self._evaluate_record_and_save()
@@ -250,7 +299,7 @@ class EvalVideoSaveBestCallback(BaseCallback):
             if video_frames is None:
                 print("[Video] aucune frame retournée pour la vidéo d'évaluation")
             else:
-                fps = int(getattr(self.eval_env.unwrapped, "camera_fps", 30))
+                fps = get_camera_fps(self.eval_env, default=30)
                 video_path = self.video_dir / f"episode_{self.episode_count:04d}.mp4"
                 save_video(video_frames, video_path, fps=fps)
 

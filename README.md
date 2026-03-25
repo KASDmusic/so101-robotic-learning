@@ -38,7 +38,11 @@
   - [ ] implémenter système seed;
   - [ ] Position balle + vecteur vitesse (la traj de la balle doit aller vers la raquette);
   - [ ] Position robot / raquette;
+- [ ] Corriger et faire rewards
+  - [ ] Corriger raquette droite pour que ça ne concerne qu'une face de la raquette;
+  - [ ] Faire autres rewards ...
 - [ ] Tester entrainement avec muli env simultané; 
+- [ ] Gridsearch Hyperparamètres;
 - [ ] Supprimer les informations non relatives au bras (balle par ex)
 - [ ] Optimiser execution env ? (tester enlever mesh collision raquette et/ou mesh bras pour voir si grand impact + voir si autres optimisations)
 - [ ] maj readme.txt

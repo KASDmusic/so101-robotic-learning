@@ -44,7 +44,7 @@
 - [ ] Tester entrainement avec muli env simultané; 
 - [ ] Gridsearch Hyperparamètres;
 - [ ] Supprimer les informations non relatives au bras (balle par ex)
-- [ ] Optimiser execution env ? (tester enlever mesh collision raquette et/ou mesh bras pour voir si grand impact + voir si autres optimisations)
+- [ ] Optimiser execution env ? (tester enlever mesh collision raquette et/ou mesh bras pour voir si grand impact + voir si autres optimisations ex : jax)
 - [ ] maj readme.txt
 
 ## Arborescence

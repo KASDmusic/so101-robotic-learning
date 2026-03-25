@@ -6,22 +6,6 @@ import imageio.v2 as imageio
 import numpy as np
 from stable_baselines3.common.callbacks import BaseCallback
 
-
-def get_root_from_cwd(levels_up=3) -> Path:
-    root = Path.cwd().resolve()
-    for _ in range(levels_up):
-        root = root.parent
-    return root
-
-
-def add_src_to_path(root: Path, src_dirname="src") -> Path:
-    src_path = root / src_dirname
-    src_str = str(src_path)
-    if src_str not in sys.path:
-        sys.path.append(src_str)
-    return src_path
-
-
 def ensure_dir(path) -> Path:
     path = Path(path)
     path.mkdir(parents=True, exist_ok=True)

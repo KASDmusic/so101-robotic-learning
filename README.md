@@ -31,7 +31,13 @@
 - [x] Régler problèmes import en fonction de l'endroit execution fichier;
 - [x] Régler problème enregistrement vidéos;
 - [ ] Cleaner fichiers train (evolutif, multi env, etc)
+  - [ ] Mettre tout les paramètres dans trains et tests;
+  - [ ] Implémenter pour DummyVecEnv;
+  - [ ] Implémenter pour SubprocVecEnv;
 - [ ] Ajouter variations initialisation env;
+  - [ ] implémenter système seed;
+  - [ ] Position balle + vecteur vitesse (la traj de la balle doit aller vers la raquette);
+  - [ ] Position robot / raquette;
 - [ ] Tester entrainement avec muli env simultané; 
 - [ ] Supprimer les informations non relatives au bras (balle par ex)
 - [ ] Optimiser execution env ? (tester enlever mesh collision raquette et/ou mesh bras pour voir si grand impact + voir si autres optimisations)

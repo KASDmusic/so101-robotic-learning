@@ -106,41 +106,48 @@ def render_vecenv_frames(env):
     base_env = unwrap_first_env(env)
     return base_env.render()
 
+def render_vecenv_frame(env):
+    """
+    Récupère une frame RGB depuis le vrai env gym sous-jacent.
+    Retourne un ndarray HxWxC ou None.
+    """
+    base_env = unwrap_first_env(env)
+    rendered = base_env.render()
+
+    if rendered is None:
+        return None
+
+    # Cas où render() retourne une liste de frames
+    if isinstance(rendered, list):
+        if len(rendered) == 0:
+            return None
+        return rendered[-1]
+
+    return rendered
 
 def rollout_policy(model, env, max_steps=1024, deterministic=True, capture_video=False):
-    """
-    Exécute un épisode d'évaluation sur un VecEnv SB3.
-
-    Retourne un dict avec :
-    - total_reward
-    - episode_length
-    - frames (si capture_video=True sinon None)
-    - done
-    - elapsed_time
-    """
     obs = env.reset()
     total_reward = 0.0
     start_t = time.time()
 
     done = False
-    step_idx = -1
+    step_idx = 0
+    frames = [] if capture_video else None
 
     for step_idx in range(max_steps):
+        if capture_video:
+            frame = render_vecenv_frame(env)
+            if frame is not None:
+                frames.append(frame)
+
         action, _ = model.predict(obs, deterministic=deterministic)
         obs, rewards, dones, infos = env.step(action)
 
-        reward = float(rewards[0])
+        total_reward += float(rewards[0])
         done = bool(dones[0])
-
-        total_reward += reward
 
         if done:
             break
-
-    if step_idx == -1:
-        step_idx = 0
-
-    frames = render_vecenv_frames(env) if capture_video else None
 
     return {
         "total_reward": total_reward,

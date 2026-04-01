@@ -5,6 +5,8 @@ from so101_robotic_learning.bounce_rl.rl import train_sac
 root = Path("../../")
 xml_path = root / "assets/mjcf/so101_new_calib copy.xml"
 
+model_path = root / "models/sac_bounce_best.zip"
+
 # Train SAC avec paramètres explicites
 """
 train_sac.train(
@@ -42,31 +44,9 @@ train_sac.train(
 )
 """
 
-"""
 train_sac.train(
     xml_path=xml_path,
     root=root,
     total_timesteps=50_000,
     batch_size=128,
-)
-"""
-
-"""-----------------------------------------"""
-
-model_path = root / "models/sac_bounce_best.zip"
-
-train_sac.test(
-    xml_path,
-    root,
-    model_path=model_path,
-    reward=None,
-    render_mode="human",
-    deterministic=True,
-    n_episodes=5,
-    max_steps=1024,
-    video_dir_name="videos_sac_test",
-    video_prefix="test_episode",
-    save_test_video=True,
-    fps=None,
-    verbose=1,
 )

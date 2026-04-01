@@ -6,6 +6,9 @@ import sys
 from pathlib import Path
 
 from so101_robotic_learning.bounce_rl.rewards.reward_ball_aligned_on_z_and_above_paddle import BallAlignedOnZAndAbovePaddleReward
+from so101_robotic_learning.bounce_rl.rewards.reward_ball_in_interval import BallInInterval
+from so101_robotic_learning.bounce_rl.rewards.reward_paddle_in_interval import PaddleInInterval
+from so101_robotic_learning.bounce_rl.rewards.reward_interval import RewardInterval
 
 root = "../../"
 xml_path = root + "assets/mjcf/so101_new_calib copy.xml"
@@ -15,7 +18,10 @@ data = mujoco.MjData(model)
 
 print(model.actuator_ctrlrange)
 
-reward_fn = BallAlignedOnZAndAbovePaddleReward()
+ball_in_intervall = BallInInterval()
+paddle_in_interval = PaddleInInterval()
+
+reward_fn = RewardInterval(ball_reward=ball_in_intervall, paddle_reward=paddle_in_interval)
 
 with mujoco.viewer.launch_passive(model, data) as viewer:
     start = time.time()

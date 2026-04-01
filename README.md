@@ -121,6 +121,19 @@ conda activate so101-robotic-learning
 
 **bounce_rl** consists of a reinforcement learning environment designed around a bouncing-ball and paddle setup. The goal is to train an agent to control the paddle so as to maintain a stable and continuous bouncing behavior of the ball.
 
+#### *Scripts*
+
+```
+cd script/bounce_rl
+python [script_name].py
+```
+
+- **debug.py :** exemples to launch the **bounce_rl** environment.
+- **train_ppo.py :** exemples to train a ppo policy on the **bounce_rl** environment.
+- **train_sac.py :** exemples to train a sac policy on the **bounce_rl** environment.
+- **test_ppo.py :** exemples to test and vizualise a ppo policy on the **bounce_rl** environment.
+- **test_sac.py :** exemples to test and vizualise a sac policy on the **bounce_rl** environment.
+
 #### *Rewards*
 
 ##### *Solo*

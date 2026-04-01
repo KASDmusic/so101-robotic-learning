@@ -42,6 +42,8 @@ def train(
     root,
     *,
     # Environnement
+    nb_vec_env_train=1,
+    nb_vec_env_test=1,
     train_render_mode=None,
     eval_render_mode="rgb_array_list",
     reward=None,
@@ -90,6 +92,7 @@ def train(
             render_mode=train_render_mode,
             reward=reward,
         )
+        for _ in range(nb_vec_env_train)
     ])
     eval_env = DummyVecEnv([
         make_env(
@@ -97,6 +100,7 @@ def train(
             render_mode=eval_render_mode,
             reward=reward,
         )
+        for _ in range(nb_vec_env_test)
     ])
 
     if use_vec_transpose_image:

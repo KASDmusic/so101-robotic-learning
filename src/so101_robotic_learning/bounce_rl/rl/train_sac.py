@@ -8,6 +8,9 @@ from stable_baselines3.common.vec_env import DummyVecEnv
 from so101_robotic_learning.bounce_rl.rewards.reward_ball_aligned_on_z_and_above_paddle import (
     BallAlignedOnZAndAbovePaddleReward,
 )
+from so101_robotic_learning.bounce_rl.rewards.reward_ball_in_interval import BallInInterval
+from so101_robotic_learning.bounce_rl.rewards.reward_interval import RewardInterval
+from so101_robotic_learning.bounce_rl.rewards.reward_paddle_in_interval import PaddleInInterval
 
 from .rl_utils import (
     EvalVideoSaveBestCallback,
@@ -28,10 +31,20 @@ def make_env(
     def _init():
         env_reward = reward if reward is not None else BallAlignedOnZAndAbovePaddleReward()
 
+        ball_in_intervall = BallInInterval()
+        paddle_in_interval = PaddleInInterval()
+
+        reward_fn = RewardInterval(
+            ball_reward=ball_in_intervall, 
+            paddle_reward=paddle_in_interval,
+            weight_ball=1,
+            weight_paddle=0
+        )
+        
         env = BounceEnv(
             xml_path=str(xml_path),
             render_mode=render_mode,
-            reward=env_reward,
+            reward=reward_fn,
         )
         env = Monitor(env)
         return env
@@ -43,6 +56,8 @@ def train(
     xml_path,
     root,
     *,
+    nb_vec_env_train=1,
+    nb_vec_env_test=1,
     train_render_mode=None,
     eval_render_mode="rgb_array_list",
     reward=None,
@@ -85,6 +100,7 @@ def train(
             render_mode=train_render_mode,
             reward=reward,
         )
+        for _ in range(nb_vec_env_train)
     ])
     eval_env = DummyVecEnv([
         make_env(
@@ -92,6 +108,7 @@ def train(
             render_mode=eval_render_mode,
             reward=reward,
         )
+        for _ in range(nb_vec_env_test)
     ])
 
     if print_spaces:

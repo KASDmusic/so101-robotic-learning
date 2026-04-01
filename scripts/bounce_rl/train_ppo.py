@@ -50,4 +50,5 @@ train_ppo.train(
     total_timesteps=50_000,
     n_steps=128,
     batch_size=64,
+    nb_vec_env_train=5
 )

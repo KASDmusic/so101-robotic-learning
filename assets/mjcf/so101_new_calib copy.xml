@@ -57,6 +57,15 @@
       solref="0.004 0.2"
       solimp="0.95 0.99 0.001"/>
 
+    <!-- Box reward ball -->
+    <!-- <geom name="zone_box"
+      type="box"
+      pos="0.5 0 0.6"
+      size="0.3 0.3 0.25"
+      rgba="0 0.6 1 0.5"
+      contype="0"
+      conaffinity="0"/> -->
+
     <!-- Lumière principale -->
     <light name="sun"
           pos="0 0 3"
@@ -80,7 +89,7 @@
 
     <!-- Balle de ping-pong -->
     <!-- Source : https://pmc.ncbi.nlm.nih.gov/articles/PMC11025803/ -->
-    <body name="ball" pos="0.5 0 0.5">
+    <body name="ball" pos="0.5 0 1">
       <freejoint/>
       <geom name="ball"
             type="sphere"

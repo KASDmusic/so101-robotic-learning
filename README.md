@@ -41,11 +41,13 @@
 - [ ] Corriger et faire rewards
   - [ ] Corriger raquette droite pour que ça ne concerne qu'une face de la raquette;
   - [ ] Faire autres rewards ...
-- [ ] Tester entrainement avec muli env simultané; 
+    - [ ] Reward position balle comprise dans un espace donné;
+    - [ ] Reward position raquette comprise dans un espace donné;
+    - [ ] 
+- [ ] Tester entrainement avec muli env; 
 - [ ] Gridsearch Hyperparamètres;
 - [ ] Supprimer les informations non relatives au bras (balle par ex)
-- [ ] Optimiser execution env ? (tester enlever mesh collision raquette et/ou mesh bras pour voir si grand impact + voir si autres optimisations ex : jax)h
-- [ ] maj readme.txt
+- [ ] Optimiser execution env ? (tester enlever mesh collision raquette et/ou mesh bras pour voir si grand impact + voir si autres optimisations ex : jax)
 
 ## Arborescence
 

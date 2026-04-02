@@ -155,7 +155,7 @@ python [script_name].py
 - **PaddleParallelReward** : Evaluate if the paddle is parallel with the floor.
 - **BallVerticalReward** : Evaluate if the ball’s velocity vector is perpendicular to the ground.
 - **BallSpeedReward** : Evaluate if the ball’s velocity vector is close to a constent.
-- **BallBelowPaddle** : Evaluate if the ball is bellow the paddle.
+- **BallBelowPaddlePenalty** : Evaluate if the ball is bellow the paddle.
 
 ##### *Combination*
 

@@ -138,10 +138,10 @@ python [script_name].py
 
 ```mermaid
   graph TD;
-      PingPongReward e1@==> PaddleParallelReward;
-      PingPongReward e2@==> BallVerticalReward;
-      PingPongReward e3@==> BallSpeedReward;
-      PingPongReward e4@==> BallBelowPaddle;
+      PaddleParallelReward e1@==> PingPongReward;
+      BallVerticalReward e2@==> PingPongReward;
+      BallSpeedReward e3@==> PingPongReward;
+      BallBelowPaddle e4@==> PingPongReward;
 
       e1@{ animate: true }
       e2@{ animate: true }

@@ -163,10 +163,10 @@ python [script_name].py
 
 #### *Benchmark*
 
-|   |  REINFORCE | Q-learning  | PPO  |  SAC |
-|---|---|---|---|---|
-| **PaddleParallelReward** | 32  | 40  | 120  | 150  |
-| **BallVerticalReward**  | 32  | 40  | 120  | 150  |
-| **BallSpeedReward** | 32  | 40  | 120  | 150  |
-| **BallBelowPaddle** | 32  | 40  | 120  | 150  |
-| **PingPongReward** | 32  | 40  | 120  | 150  |
+|   | PPO  |  SAC |
+|---|---|---|
+| **PaddleParallelReward** | 120  | 150  |
+| **BallVerticalReward**  | 32  | 40  |
+| **BallSpeedReward** | 32  | 40  | 120
+| **BallBelowPaddle** | 32  | 40  | 120
+| **PingPongReward** | 32  | 40  | 120

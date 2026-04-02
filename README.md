@@ -124,7 +124,7 @@ conda activate so101-robotic-learning
 #### *Scripts*
 
 ```
-cd script/bounce_rl
+cd scripts/bounce_rl
 python [script_name].py
 ```
 

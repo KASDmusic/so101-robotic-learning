@@ -32,12 +32,8 @@
 - [x] Régler problème enregistrement vidéos;
 - [ ] Cleaner fichiers train (evolutif, multi env, etc)
   - [x] Mettre tout les paramètres dans trains et tests;
-  - [ ] Implémenter pour DummyVecEnv;
+  - [x] Implémenter pour DummyVecEnv;
   - [ ] Implémenter pour SubprocVecEnv;
-- [ ] Ajouter variations initialisation env;
-  - [ ] implémenter système seed;
-  - [ ] Position balle + vecteur vitesse (la traj de la balle doit aller vers la raquette);
-  - [ ] Position robot / raquette;
 - [ ] Corriger et faire rewards
   - [ ] Corriger raquette droite pour que ça ne concerne qu'une face de la raquette;
   - [ ] Faire autres rewards ...
@@ -46,6 +42,10 @@
     - [ ] 
 - [ ] Tester entrainement avec muli env; 
 - [ ] Gridsearch Hyperparamètres;
+- [ ] Ajouter variations initialisation env;
+  - [ ] implémenter système seed;
+  - [ ] Position balle + vecteur vitesse (la traj de la balle doit aller vers la raquette);
+  - [ ] Position robot / raquette;
 - [ ] Supprimer les informations non relatives au bras (balle par ex)
 - [ ] Optimiser execution env ? (tester enlever mesh collision raquette et/ou mesh bras pour voir si grand impact + voir si autres optimisations ex : jax)
 
@@ -135,6 +135,19 @@ python [script_name].py
 - **test_sac.py :** exemples to test and vizualise a sac policy on the **bounce_rl** environment.
 
 #### *Rewards*
+
+```mermaid
+  graph TD;
+      PingPongReward e1@==> PaddleParallelReward;
+      PingPongReward e2@==> BallVerticalReward;
+      PingPongReward e3@==> BallSpeedReward;
+      PingPongReward e4@==> BallBelowPaddle;
+
+      e1@{ animate: true }
+      e2@{ animate: true }
+      e3@{ animate: true }
+      e4@{ animate: true }
+```
 
 ##### *Solo*
 

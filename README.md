@@ -119,7 +119,7 @@ conda activate so101-robotic-learning
 
 ### bounce_rl
 
-**bounce_rl** consists of a reinforcement learning environment designed around a bouncing-ball and paddle setup. The goal is to train an agent to control the paddle so as to maintain a stable and continuous bouncing behavior of the ball.
+**bounce_rl** consists of a reinforcement learning gym environment designed around a bouncing-ball and paddle setup made with mujocco. The goal is to train an agent to control the paddle so as to maintain a stable and continuous bouncing behavior of the ball.
 
 #### *Scripts*
 
@@ -161,6 +161,8 @@ python [script_name].py
 
 - **PingPongReward** : A multi-objective reward that combines several criteria.
 
+<!---
+
 #### *Benchmark*
 
 |   | PPO  |  SAC |
@@ -170,3 +172,5 @@ python [script_name].py
 | **BallSpeedReward** | 32  | 40  | 120
 | **BallBelowPaddle** | 32  | 40  | 120
 | **PingPongReward** | 32  | 40  | 120
+
+-->

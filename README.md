@@ -30,22 +30,26 @@
 - [x] Ajouter etat précédent dans observations env;
 - [x] Régler problèmes import en fonction de l'endroit execution fichier;
 - [x] Régler problème enregistrement vidéos;
+- [ ] Rendre nombres d'états latents dynamiques (prends en paramètre une liste de taille (nb_states_latents), où liste[0] = step à prendre)
+- [ ] Ajouter date à noms models et vidéos;
 - [ ] Cleaner fichiers train (evolutif, multi env, etc)
   - [x] Mettre tout les paramètres dans trains et tests;
   - [x] Implémenter pour DummyVecEnv;
   - [ ] Implémenter pour SubprocVecEnv;
 - [ ] Corriger et faire rewards
-  - [ ] Corriger raquette droite pour que ça ne concerne qu'une face de la raquette;
+  - [ ] Créer une composite à RewardMultiObjectif;
   - [ ] Faire autres rewards ...
-    - [ ] Reward position balle comprise dans un espace donné;
-    - [ ] Reward position raquette comprise dans un espace donné;
-    - [ ] 
+    - [x] Reward position balle comprise dans un espace donné;
+    - [x] Reward position raquette comprise dans un espace donné;
+  - [ ] Corriger raquette droite pour que ça ne concerne qu'une face de la raquette;
 - [ ] Tester entrainement avec muli env; 
-- [ ] Gridsearch Hyperparamètres;
 - [ ] Ajouter variations initialisation env;
   - [ ] implémenter système seed;
   - [ ] Position balle + vecteur vitesse (la traj de la balle doit aller vers la raquette);
+  - [ ] masse balle, proprité de la balle
   - [ ] Position robot / raquette;
+  - [ ] lumières
+- [ ] Gridsearch Hyperparamètres;
 - [ ] Supprimer les informations non relatives au bras (balle par ex)
 - [ ] Optimiser execution env ? (tester enlever mesh collision raquette et/ou mesh bras pour voir si grand impact + voir si autres optimisations ex : jax)
 

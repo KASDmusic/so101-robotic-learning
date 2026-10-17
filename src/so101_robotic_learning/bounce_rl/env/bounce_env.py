@@ -1,4 +1,5 @@
 import time
+from collections import deque
 
 import gymnasium as gym
 from gymnasium import spaces
@@ -10,12 +11,24 @@ import mujoco.viewer
 class BounceEnv(gym.Env):
     """
     Gym env qui renvoie une observation Dict:
-      - obs["image"]: image RGB uint8 (H, W, 3) depuis camera_name, calculée à camera_fps
-      - obs["state"]: état float32 (qpos||qvel)
+      - obs["image"]: concaténation des images RGB uint8 (H, W, 3 * (K+1))
+                      avec image courante + images passées demandées
+      - obs["state"]: concaténation des états float32 ((K+1) * (nq+nv),)
+                      avec état courant + états passés demandés
+
+    latent_steps:
+      tableau numpy d'entiers positifs.
+      Chaque entier k signifie: prendre l'observation du step passé t-k.
+
+      Exemple:
+        latent_steps = np.array([1, 2, 10])
+
+      => l'observation contient:
+         [présent, t-1, t-2, t-10]
 
     render_mode:
       - None: aucun rendu explicite
-      - "rgb_array": render() renvoie la dernière image caméra
+      - "rgb_array": render() renvoie la dernière image caméra non concaténée
       - "rgb_array_list": render() renvoie la liste des images caméra accumulées depuis reset
       - "human": ouvre une fenêtre viewer MuJoCo native
     """
@@ -37,7 +50,8 @@ class BounceEnv(gym.Env):
         camera_fps: int = 30,
         paddle_color=(0.9, 0.05, 0.05, 1),
         ball_mass: float = 0.003,
-        render_mode: str | None = None
+        latent_steps: np.ndarray | None = None,
+        render_mode: str | None = None,
     ):
         super().__init__()
 
@@ -59,6 +73,22 @@ class BounceEnv(gym.Env):
 
         self.step_count = 0
 
+        # Steps passés à inclure dans l'observation
+        if latent_steps is None:
+            latent_steps = np.array([], dtype=np.int32)
+
+        self.latent_steps = np.asarray(latent_steps, dtype=np.int32).reshape(-1)
+
+        if self.latent_steps.size > 0:
+            if np.any(self.latent_steps <= 0):
+                raise ValueError("latent_steps doit contenir uniquement des entiers strictement positifs.")
+            if len(np.unique(self.latent_steps)) != len(self.latent_steps):
+                raise ValueError("latent_steps ne doit pas contenir de doublons.")
+
+        # On conserve l'ordre donné par l'utilisateur
+        self.num_frames = len(self.latent_steps) + 1
+        self.max_history = int(self.latent_steps.max()) if len(self.latent_steps) > 0 else 0
+
         # Caméra RGB throttlée sur temps simulé
         self.camera_fps = float(camera_fps)
         self.camera_period = 1.0 / self.camera_fps
@@ -78,18 +108,25 @@ class BounceEnv(gym.Env):
             low=-1.0, high=1.0, shape=(self.model.nu,), dtype=np.float32
         )
 
+        # Dimensions d'état / image concaténés
+        self.state_dim = self.model.nq + self.model.nv
+        image_channels = 3 * self.num_frames
+        stacked_state_dim = self.state_dim * self.num_frames
+
         # Observation space: Dict(image, state)
-        state_dim = self.model.nq + self.model.nv
         self.observation_space = spaces.Dict(
             {
                 "image": spaces.Box(
-                    low=0, high=255, shape=(height, width, 3), dtype=np.uint8
-                ),
-                "last_image": spaces.Box(
-                    low=0, high=255, shape=(height, width, 3), dtype=np.uint8
+                    low=0,
+                    high=255,
+                    shape=(height, width, image_channels),
+                    dtype=np.uint8,
                 ),
                 "state": spaces.Box(
-                    low=-np.inf, high=np.inf, shape=(state_dim*2,), dtype=np.float32
+                    low=-np.inf,
+                    high=np.inf,
+                    shape=(stacked_state_dim,),
+                    dtype=np.float32,
                 ),
             }
         )
@@ -104,10 +141,13 @@ class BounceEnv(gym.Env):
         self._set_paddle_color(paddle_color)
         self._set_ball_mass(ball_mass)
 
-        # Dernière image rendue
-        self._prev_state = np.zeros(self.model.nq + self.model.nv, dtype=np.float32)
-        self._prev_image = np.zeros((height, width, 3), dtype=np.uint8)
+        # Dernière image rendue (non concaténée)
         self._last_image = np.zeros((height, width, 3), dtype=np.uint8)
+
+        # Historiques de snapshots par step env
+        # On stocke les observations non concaténées
+        self._state_history = deque(maxlen=self.max_history + 1 if self.max_history > 0 else 1)
+        self._image_history = deque(maxlen=self.max_history + 1 if self.max_history > 0 else 1)
 
         # Buffer des frames pour render_mode="rgb_array_list"
         self._rendered_frames = []
@@ -181,13 +221,32 @@ class BounceEnv(gym.Env):
     def _get_state(self) -> np.ndarray:
         return np.concatenate([self.data.qpos, self.data.qvel]).astype(np.float32)
 
-    def _get_obs(self):
-        self._maybe_update_camera()
-        current_state = self._get_state()
+    def _get_past_state(self, lag: int) -> np.ndarray:
+        # lag=1 => step précédent, donc élément [-1]
+        # lag=2 => élément [-2], etc.
+        if lag <= len(self._state_history):
+            return self._state_history[-lag].copy()
+        return self._state_history[0].copy()
+
+    def _get_past_image(self, lag: int) -> np.ndarray:
+        if lag <= len(self._image_history):
+            return self._image_history[-lag].copy()
+        return self._image_history[0].copy()
+
+    def _build_obs(self, current_state: np.ndarray, current_image: np.ndarray):
+        state_parts = [current_state]
+        image_parts = [current_image]
+
+        for lag in self.latent_steps:
+            state_parts.append(self._get_past_state(int(lag)))
+            image_parts.append(self._get_past_image(int(lag)))
+
+        stacked_state = np.concatenate(state_parts, axis=0).astype(np.float32)
+        stacked_image = np.concatenate(image_parts, axis=2).astype(np.uint8)
+
         obs = {
-            "image": self._last_image.copy(),
-            "last_image": self._prev_image.copy(),
-            "state": np.concatenate([self._prev_state, current_state], axis=0).astype(np.float32),
+            "image": stacked_image,
+            "state": stacked_state,
         }
         return obs
 
@@ -213,16 +272,18 @@ class BounceEnv(gym.Env):
         self._maybe_update_camera()
 
         current_state = self._get_state()
+        current_image = self._last_image.copy()
 
-        # au reset, on duplique l'observation courante comme "précédente"
-        self._prev_state = current_state.copy()
-        self._prev_image = self._last_image.copy()
+        # Au reset, on remplit tout l'historique avec l'observation courante
+        self._state_history.clear()
+        self._image_history.clear()
 
-        obs = {
-            "image": self._last_image.copy(),
-            "last_image": self._prev_image.copy(),
-            "state": np.concatenate([self._prev_state, current_state], axis=0).astype(np.float32),
-        }
+        history_len = self.max_history + 1 if self.max_history > 0 else 1
+        for _ in range(history_len):
+            self._state_history.append(current_state.copy())
+            self._image_history.append(current_image.copy())
+
+        obs = self._build_obs(current_state, current_image)
 
         if self.render_mode == "human":
             self._sync_human_viewer()
@@ -248,15 +309,14 @@ class BounceEnv(gym.Env):
         current_image = self._last_image.copy()
         current_state = self._get_state()
 
-        obs = {
-            "image": current_image,
-            "last_image": self._prev_image.copy(),
-            "state": np.concatenate([self._prev_state, current_state], axis=0).astype(np.float32),
-        }
+        # Construit obs avec:
+        # - présent = current_*
+        # - passé = contenu des buffers avant d'ajouter current_*
+        obs = self._build_obs(current_state, current_image)
 
-        # mise à jour pour le prochain step
-        self._prev_state = current_state.copy()
-        self._prev_image = current_image.copy()
+        # Puis met à jour l'historique pour le prochain step
+        self._state_history.append(current_state.copy())
+        self._image_history.append(current_image.copy())
 
         if self.render_mode == "human":
             self._sync_human_viewer()

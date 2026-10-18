@@ -20,40 +20,6 @@
 
 <!---
 
-## TODO
-
-- [x] Enregistrer checkpoints model (best_reward)
-- [x] Faire en sorte que les entrainement puisse être lancés depuis un notebook (passer en paramètre fichier de config)
-- [x] Ajouter etat précédent dans observations env;
-- [x] Régler problèmes import en fonction de l'endroit execution fichier;
-- [x] Régler problème enregistrement vidéos;
-- [ ] Rendre nombres d'états latents dynamiques (prends en paramètre une liste de taille (nb_states_latents), où liste[0] = step à prendre)
-- [ ] Ajouter date à noms models et vidéos;
-- [ ] Cleaner fichiers train (evolutif, multi env, etc)
-  - [x] Mettre tout les paramètres dans trains et tests;
-  - [x] Implémenter pour DummyVecEnv;
-  - [ ] Implémenter pour SubprocVecEnv;
-- [ ] Corriger et faire rewards
-  - [ ] Créer une composite à RewardMultiObjectif;
-  - [ ] Faire autres rewards ...
-    - [x] Reward position balle comprise dans un espace donné;
-    - [x] Reward position raquette comprise dans un espace donné;
-  - [x] Corriger raquette droite pour que ça ne concerne qu'une face de la raquette;
-- [x] Détecter les rebonds valides à chaque sous-pas, sans compter plusieurs fois les contacts prolongés;
-- [x] Ajouter bonus de rebond, shaping auxiliaire et pénalité de chute;
-- [x] Mesurer séries de rebonds, temps avant chute et dispersion des impacts;
-- [x] Sélectionner les checkpoints selon les métriques de jonglage et enregistrer les rapports;
-- [ ] Tester entrainement avec muli env; 
-- [ ] Ajouter variations initialisation env;
-  - [ ] implémenter système seed;
-  - [ ] Position balle + vecteur vitesse (la traj de la balle doit aller vers la raquette);
-  - [ ] masse balle, proprité de la balle
-  - [ ] Position robot / raquette;
-  - [ ] lumières
-- [ ] Gridsearch Hyperparamètres;
-- [ ] Supprimer les informations non relatives au bras (balle par ex)
-- [ ] Optimiser execution env ? (tester enlever mesh collision raquette et/ou mesh bras pour voir si grand impact + voir si autres optimisations ex : jax)
-
 ## Arborescence
 
 ```
@@ -165,6 +131,25 @@ python [script_name].py
 ##### *Combination*
 
 - **PingPongReward** : A multi-objective reward that combines several criteria.
+
+#### TODO
+
+- [ ] **Make the number of latent states dynamic** (accept a list of length `nb_states_latents` as a parameter, where `list[0]` is the step to use).
+- [ ] **Add dates to model and video filenames.**
+- [ ] **Add support for `SubprocVecEnv`.**
+- [ ] **Fix and implement rewards.**
+  - [ ] Create a composite reward for `RewardMultiObjectif`.
+  - [ ] Implement additional rewards.
+- [ ] **Add variations to environment initialization.**
+  - [ ] Implement a seeding system.
+  - [ ] Vary the ball’s position and velocity vector (its trajectory must head toward the paddle).
+  - [ ] Vary the ball’s mass and other properties.
+  - [ ] Vary the robot/paddle position.
+  - [ ] Vary the lighting.
+- [ ] **Run a hyperparameter grid search.**
+- [ ] **When it is working, remove information unrelated to the arm (e.g., ball information).**
+- [ ] **Optimize environment execution?** (Test whether removing the paddle’s collision mesh and/or the arm’s mesh has a significant impact, reducing frame rendering and explore other optimizations, such as JAX.)
+
 
 <!---
 

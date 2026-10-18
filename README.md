@@ -140,6 +140,7 @@ python [script_name].py
   - [ ] Implement additional rewards :
     - [ ] Penality depending of the distance with the closest point of a line beetween the paddle;
     - [ ] Reset the environnement also if the paddle touch the ground or if the ball is too far of the robot (because the model actually learn to launch the ball far away one time);
+    - [ ] Penalty depending of the 'energy" consumed.
 - [ ] **Add variations to environment initialization.**
   - [ ] Implement a seeding system.
   - [ ] Vary the ball’s position and velocity vector (its trajectory must head toward the paddle).

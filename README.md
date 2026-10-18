@@ -149,6 +149,7 @@ python [script_name].py
 - [ ] **Run a hyperparameter grid search.**
 - [ ] **When it is working, remove information unrelated to the arm (e.g., ball information).**
 - [ ] **Optimize environment execution?** (Test whether removing the paddle’s collision mesh and/or the arm’s mesh has a significant impact, reducing frame rendering and explore other optimizations, such as JAX.)
+- [ ] **Sim2Real.**
 
 
 <!---

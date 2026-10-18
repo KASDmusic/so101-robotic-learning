@@ -2,22 +2,7 @@
 
 <div align="center" style="max-width:900px; margin:auto;">
 
-<img src="img/ppo_past_states.gif" width="100%">
-<p>Env mujoco</p>
-
-<table align="center" width="100%">
-  <tr>
-  <td align="center" width="50%">
-    <img src="img/ppo.gif" width="100%"><br>
-    PPO raquette droite
-  </td>
-
-  <td align="center" width="50%">
-    <img src="img/pseudo_rebond.gif" width="100%"><br>
-    PPO ball on paddle + upper the paddle
-    </td>
-</tr>
-</table>
+<img src="img/imageData.gif" width="100%"><br>
 
 </div>
 

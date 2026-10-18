@@ -179,6 +179,3 @@ python [script_name].py
 | **PingPongReward** | 32  | 40  | 120
 
 -->
-mais des pixels différents ; conserver le même profil à l'entraînement et au test.
-Redémarrer le kernel avant un nouveau lancement. Les runs existants ne sont
-ni déplacés ni modifiés, et les entraînements en cours ne changent pas de profil.

@@ -1,10 +1,13 @@
-import sys
+import json
 import time
+from io import BytesIO
 from pathlib import Path
 
-import imageio.v2 as imageio
 import numpy as np
+from PIL import Image, ImageDraw
 from stable_baselines3.common.callbacks import BaseCallback
+from stable_baselines3.common.logger import TensorBoardOutputFormat
+from tensorboard.compat.proto.summary_pb2 import Summary
 
 def ensure_dir(path) -> Path:
     path = Path(path)
@@ -31,22 +34,68 @@ def validate_continuous_action_space(env):
         )
 
 
-def save_video(frames, output_path, fps=30):
-    if frames is None or len(frames) == 0:
-        print(f"[Video] aucune frame à sauvegarder pour {output_path}")
-        return
+def combine_camera_frames(overview, gripper):
+    """Pair corresponding camera frames into one labeled, aspect-preserving view."""
+    if overview is None or gripper is None or len(overview) == 0 or len(gripper) == 0:
+        return []
+    if len(overview) != len(gripper):
+        raise ValueError("Camera streams must contain the same number of frames.")
+    frames = []
+    for external_frame, gripper_frame in zip(overview, gripper):
+        external = Image.fromarray(external_frame)
+        policy = Image.fromarray(gripper_frame)
+        height = external.height
+        policy = policy.resize(
+            (max(1, round(policy.width * height / policy.height)), height),
+            resample=Image.Resampling.BILINEAR,
+        )
+        canvas = Image.new("RGB", (external.width + policy.width, height + 20))
+        canvas.paste(external, (0, 20))
+        canvas.paste(policy, (external.width, 20))
+        labels = ImageDraw.Draw(canvas)
+        labels.text((4, 3), "Overview", fill="white")
+        labels.text((external.width + 4, 3), "Gripper", fill="white")
+        frames.append(np.asarray(canvas))
+    return frames
 
-    output_path = Path(output_path)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    safe_frames = []
-    for frame in frames:
-        arr = np.asarray(frame)
-        if arr.dtype != np.uint8:
-            arr = np.clip(arr, 0, 255).astype(np.uint8)
-        safe_frames.append(arr)
+def log_tensorboard_video(logger, frames, fps, step, tag="eval/video"):
+    """Write an animated GIF to TensorBoard's Images tab, entirely in memory.
 
-    imageio.mimsave(output_path, safe_frames, fps=fps)
+    The native video summary is an encoded GIF. Encoding it here avoids the
+    optional MoviePy dependency and locked temporary files on Windows.
+    """
+    outputs = [output for output in getattr(logger, "output_formats", ())
+               if isinstance(output, TensorBoardOutputFormat)]
+    if not outputs or frames is None or len(frames) == 0:
+        return False
+    if not np.isfinite(fps) or fps <= 0:
+        raise ValueError("Video fps must be finite and positive.")
+    images = [Image.fromarray(np.clip(frame, 0, 255).astype(np.uint8)) for frame in frames]
+    # GIF stores centiseconds. Alternate durations to preserve e.g. 30 FPS.
+    ticks = np.rint(np.arange(len(images) + 1) * 100 / fps).astype(int)
+    durations = np.maximum(np.diff(ticks), 1) * 10
+    with BytesIO() as buffer:
+        images[0].save(buffer, format="GIF", save_all=True, append_images=images[1:],
+                       duration=durations.tolist(), loop=0, disposal=2)
+        summary = Summary(value=[Summary.Value(tag=tag, image=Summary.Image(
+            height=images[0].height, width=images[0].width, colorspace=3,
+            encoded_image_string=buffer.getvalue(),
+        ))])
+    for output in outputs:
+        output.writer.file_writer.add_summary(summary, global_step=step)
+        output.writer.flush()
+    return True
+
+
+def log_camera_videos(logger, frames, gripper_frames, fps, step, prefix="eval"):
+    """Store synchronized camera GIFs directly in TensorBoard event files."""
+    log_tensorboard_video(logger, frames, fps, step, tag=f"{prefix}/video")
+    log_tensorboard_video(logger, gripper_frames, fps, step, tag=f"{prefix}/gripper_cam")
+    if any(isinstance(output, TensorBoardOutputFormat)
+           for output in getattr(logger, "output_formats", ())):
+        log_tensorboard_video(logger, combine_camera_frames(frames, gripper_frames),
+                              fps, step, tag=f"{prefix}/cameras")
 
 
 def unwrap_first_env(env):
@@ -79,66 +128,40 @@ def unwrap_first_env(env):
 
 
 def get_camera_fps(env, default=30):
-    base_env = unwrap_first_env(env)
-    return int(getattr(base_env.unwrapped, "camera_fps", default))
+    if hasattr(env, "env_method"):
+        return float(env.env_method("get_wrapper_attr", "camera_fps", indices=0)[0])
+    return float(getattr(env.unwrapped, "camera_fps", default))
 
 
 def render_vecenv_frames(env):
-    """
-    Tente de récupérer les frames depuis le vrai env gym sous-jacent.
-    """
-    base_env = unwrap_first_env(env)
-    return base_env.render()
+    """Drain every camera frame from environment zero, including through Vec wrappers."""
+    return env.env_method("pop_render_frames", indices=0)[0]
+
+
+def render_vecenv_observation_frames(env):
+    """Optional second video stream; other Gym environments may not provide it."""
+    try:
+        return env.env_method("pop_observation_frames", indices=0)[0]
+    except AttributeError:
+        return []
+
 
 def render_vecenv_frame(env):
-    """
-    Récupère une frame RGB depuis le vrai env gym sous-jacent.
-    Retourne un ndarray HxWxC ou None.
-    """
-    base_env = unwrap_first_env(env)
-    rendered = base_env.render()
+    frames = render_vecenv_frames(env)
+    return frames[-1] if frames else None
 
-    if rendered is None:
-        return None
-
-    # Cas où render() retourne une liste de frames
-    if isinstance(rendered, list):
-        if len(rendered) == 0:
-            return None
-        return rendered[-1]
-
-    return rendered
 
 def rollout_policy(model, env, max_steps=1024, deterministic=True, capture_video=False):
-    obs = env.reset()
-    total_reward = 0.0
-    start_t = time.time()
-
-    done = False
-    step_idx = 0
-    frames = [] if capture_video else None
-
-    for step_idx in range(max_steps):
-        if capture_video:
-            frame = render_vecenv_frame(env)
-            if frame is not None:
-                frames.append(frame)
-
-        action, _ = model.predict(obs, deterministic=deterministic)
-        obs, rewards, dones, infos = env.step(action)
-
-        total_reward += float(rewards[0])
-        done = bool(dones[0])
-
-        if done:
-            break
-
+    result = evaluate_policy_on_env(
+        model, env, n_eval_episodes=1, max_steps=max_steps,
+        deterministic=deterministic, record_video_first_episode=capture_video,
+    )
     return {
-        "total_reward": total_reward,
-        "episode_length": step_idx + 1,
-        "frames": frames,
-        "done": done,
-        "elapsed_time": time.time() - start_t,
+        "total_reward": result["rewards"][0],
+        "episode_length": result["first_episode_length"],
+        "frames": result["video_frames"],
+        "done": result["episode_dones"][0],
+        "elapsed_time": result["first_episode_time"],
     }
 
 
@@ -150,50 +173,140 @@ def evaluate_policy_on_env(
     deterministic=True,
     record_video_first_episode=False,
 ):
-    """
-    Évalue un modèle sur plusieurs épisodes d'un VecEnv.
+    """Evaluate a policy, restoring video capture budgets even on failure."""
+    try:
+        return _evaluate_policy_on_env(
+            model, env, n_eval_episodes, max_steps, deterministic,
+            record_video_first_episode,
+        )
+    finally:
+        _set_video_capture_limit(env, None)
 
-    Retourne :
-    - mean_reward
-    - std_reward
-    - rewards
-    - video_frames (frames du 1er épisode si demandé)
-    - first_episode_length
-    - first_episode_time
+
+def _set_video_capture_limit(env, episodes, indices=None):
+    try:
+        env.env_method("set_video_capture_limit", episodes, indices=indices)
+    except AttributeError:
+        # Generic Gym environments need not implement optional camera control.
+        pass
+
+
+def _evaluate_policy_on_env(
+    model,
+    env,
+    n_eval_episodes=3,
+    max_steps=1024,
+    deterministic=True,
+    record_video_first_episode=False,
+):
+    """Evaluate exactly n episodes in batches across all vector environments.
+
+    Each batch uses at most one episode per worker. Faster workers' auto-reset
+    episodes are ignored until the batch finishes, avoiding short-episode bias.
+    max_steps caps each recorded episode, including environments that never end.
+    The video is the first episode of worker zero, with its terminal frames.
     """
+    if n_eval_episodes < 1 or max_steps < 1:
+        raise ValueError("n_eval_episodes and max_steps must be positive.")
     rewards = []
-    video_frames = None
+    episode_dones = []
+    episode_metrics = []
+    video_frames = [] if record_video_first_episode else None
+    gripper_video_frames = [] if record_video_first_episode else None
     first_episode_length = None
     first_episode_time = None
 
-    for ep in range(n_eval_episodes):
-        result = rollout_policy(
-            model=model,
-            env=env,
-            max_steps=max_steps,
-            deterministic=deterministic,
-            capture_video=(record_video_first_episode and ep == 0),
-        )
+    while len(rewards) < n_eval_episodes:
+        recording = record_video_first_episode and not rewards
+        _set_video_capture_limit(env, 0)
+        if recording:
+            _set_video_capture_limit(env, 1, indices=0)
+        obs = env.reset()
+        batch_size = min(env.num_envs, n_eval_episodes - len(rewards))
+        totals = np.zeros(batch_size, dtype=np.float64)
+        active = np.ones(batch_size, dtype=bool)
+        batch_dones = np.zeros(batch_size, dtype=bool)
+        batch_metrics = [None] * batch_size
+        start_t = time.perf_counter()
+        if recording:
+            video_frames.extend(render_vecenv_frames(env))
+            gripper_video_frames.extend(render_vecenv_observation_frames(env))
 
-        rewards.append(result["total_reward"])
+        for step_idx in range(max_steps):
+            action, _ = model.predict(obs, deterministic=deterministic)
+            obs, step_rewards, dones, infos = env.step(action)
+            totals[active] += np.asarray(step_rewards)[:batch_size][active]
+            if recording and active[0]:
+                if dones[0]:
+                    # The live buffer now belongs to the auto-reset episode.
+                    video_frames.extend(infos[0].get("terminal_render_frames", []))
+                    gripper_video_frames.extend(infos[0].get("terminal_observation_frames", []))
+                else:
+                    video_frames.extend(render_vecenv_frames(env))
+                    gripper_video_frames.extend(render_vecenv_observation_frames(env))
+            for i in range(batch_size):
+                if active[i] and (dones[i] or step_idx + 1 == max_steps):
+                    active[i] = False
+                    batch_dones[i] = dones[i]
+                    if "task_metrics" in infos[i]:
+                        batch_metrics[i] = dict(infos[i]["task_metrics"])
+                        batch_metrics[i]["evaluation_censored"] = (
+                            not bool(dones[i]) or bool(infos[i].get("TimeLimit.truncated", False))
+                        )
+                    if i == 0 and first_episode_length is None:
+                        first_episode_length = step_idx + 1
+                        first_episode_time = time.perf_counter() - start_t
+            if not active.any():
+                break
 
-        if ep == 0:
-            first_episode_length = result["episode_length"]
-            first_episode_time = result["elapsed_time"]
-            if record_video_first_episode:
-                video_frames = result["frames"]
-
-    mean_reward = float(np.mean(rewards)) if rewards else float("-inf")
-    std_reward = float(np.std(rewards)) if rewards else 0.0
+        rewards.extend(totals.tolist())
+        episode_dones.extend(batch_dones.tolist())
+        episode_metrics.extend(batch_metrics)
 
     return {
-        "mean_reward": mean_reward,
-        "std_reward": std_reward,
+        "mean_reward": float(np.mean(rewards)),
+        "std_reward": float(np.std(rewards)),
         "rewards": rewards,
+        "episode_dones": episode_dones,
+        "episode_metrics": episode_metrics,
+        "task_metrics": summarize_task_metrics(episode_metrics),
         "video_frames": video_frames,
+        "gripper_video_frames": gripper_video_frames,
         "first_episode_length": first_episode_length,
         "first_episode_time": first_episode_time,
     }
+
+
+def summarize_task_metrics(episodes):
+    """Aggregate task metrics; missing/censored falls are never treated as zero."""
+    measured = [episode for episode in episodes if episode is not None]
+    if not measured:
+        return {}
+
+    def mean(key):
+        values = [episode[key] for episode in measured if episode.get(key) is not None]
+        return float(np.mean(values)) if values else None
+
+    return {
+        "success_rate": mean("success"),
+        "mean_valid_bounces": mean("valid_bounces"),
+        "mean_max_consecutive_bounces": mean("max_consecutive_bounces"),
+        "mean_duration_s": mean("elapsed_sim_time_s"),
+        "mean_time_to_fall_s": mean("time_to_fall_s"),
+        "fall_rate": mean("fell"),
+        "mean_contact_dispersion_m": mean("contact_dispersion_m"),
+    }
+
+
+def evaluation_score(result):
+    """Prefer actual juggling success; reward is a fallback for other tasks."""
+    metrics = result["task_metrics"]
+    if metrics:
+        return (
+            metrics["success_rate"], metrics["mean_max_consecutive_bounces"],
+            metrics["mean_valid_bounces"], metrics["mean_duration_s"],
+        )
+    return (result["mean_reward"],)
 
 
 class EvalVideoSaveBestCallback(BaseCallback):
@@ -201,8 +314,8 @@ class EvalVideoSaveBestCallback(BaseCallback):
     Callback unifié compatible VecEnv qui, tous les `eval_every_episodes`
     épisodes terminés :
     - évalue le modèle sur `n_eval_episodes`
-    - enregistre une vidéo du 1er épisode d'évaluation (optionnel)
-    - sauvegarde le modèle si le score moyen est meilleur que le précédent best
+    - enregistre les GIF du 1er épisode dans TensorBoard (optionnel)
+    - sauvegarde le modèle selon les métriques de jonglage (reward en fallback)
     """
 
     def __init__(
@@ -220,8 +333,11 @@ class EvalVideoSaveBestCallback(BaseCallback):
         super().__init__(verbose)
         self.eval_env = eval_env
         self.best_model_path = Path(best_model_path)
-        self.video_dir = Path(video_dir) if video_dir is not None else None
+        # video_dir is accepted for compatibility; GIFs live in TensorBoard.
+        if eval_every_episodes < 1:
+            raise ValueError("eval_every_episodes must be positive.")
         self.eval_every_episodes = eval_every_episodes
+        self.next_eval_episode = eval_every_episodes
         self.n_eval_episodes = n_eval_episodes
         self.max_steps = max_steps
         self.deterministic = deterministic
@@ -229,10 +345,9 @@ class EvalVideoSaveBestCallback(BaseCallback):
 
         self.episode_count = 0
         self.best_mean_reward = -np.inf
+        self.best_task_score = None
 
         self.best_model_path.parent.mkdir(parents=True, exist_ok=True)
-        if self.video_dir is not None:
-            self.video_dir.mkdir(parents=True, exist_ok=True)
 
     def _on_step(self) -> bool:
         dones = self.locals.get("dones")
@@ -249,8 +364,12 @@ class EvalVideoSaveBestCallback(BaseCallback):
                     f"+{n_done} | count={self.episode_count}"
                 )
 
-            if self.episode_count % self.eval_every_episodes == 0:
+            if self.episode_count >= self.next_eval_episode:
                 self._evaluate_record_and_save()
+                # Evaluate once even when a vector step crosses several thresholds.
+                self.next_eval_episode = (
+                    self.episode_count // self.eval_every_episodes + 1
+                ) * self.eval_every_episodes
 
         return True
 
@@ -275,8 +394,32 @@ class EvalVideoSaveBestCallback(BaseCallback):
         std_reward = eval_result["std_reward"]
         rewards = eval_result["rewards"]
         video_frames = eval_result["video_frames"]
-        first_episode_length = eval_result["first_episode_length"]
-        first_episode_time = eval_result["first_episode_time"]
+        metrics = eval_result["task_metrics"]
+        for name, value in metrics.items():
+            if value is not None:
+                self.logger.record(f"eval/{name}", value)
+        self.logger.record("eval/mean_reward", mean_reward)
+        self.logger.record("eval/std_reward", std_reward)
+        if self.save_video:
+            log_camera_videos(
+                self.logger, video_frames, eval_result.get("gripper_video_frames"),
+                get_camera_fps(self.eval_env), self.num_timesteps,
+            )
+        # record() only buffers values. Flush each evaluation before another one
+        # overwrites it, independently of PPO/SAC's training log interval.
+        self.logger.dump(self.num_timesteps)
+        report = {
+            "training_episodes": self.episode_count,
+            "training_timesteps": self.num_timesteps,
+            "mean_reward": mean_reward,
+            "std_reward": std_reward,
+            "rewards": rewards,
+            "task_metrics": metrics,
+            "episodes": eval_result["episode_metrics"],
+            "selection_score": list(evaluation_score(eval_result)),
+        }
+        report_path = self.best_model_path.parent / f"{self.best_model_path.stem}_eval_{self.episode_count:06d}.json"
+        report_path.write_text(json.dumps(report, indent=2, allow_nan=False), encoding="utf-8")
 
         if self.verbose:
             print(
@@ -285,32 +428,19 @@ class EvalVideoSaveBestCallback(BaseCallback):
                 f"std_reward={std_reward:.3f} | "
                 f"rewards={rewards}"
             )
+            if metrics:
+                print(f"[Task] {metrics}")
 
-        if self.save_video and self.video_dir is not None:
-            if video_frames is None:
-                print("[Video] aucune frame retournée pour la vidéo d'évaluation")
-            else:
-                fps = get_camera_fps(self.eval_env, default=30)
-                video_path = self.video_dir / f"episode_{self.episode_count:04d}.mp4"
-                save_video(video_frames, video_path, fps=fps)
-
-                if self.verbose:
-                    print(
-                        f"[Video] episode={self.episode_count:04d} | "
-                        f"frames={len(video_frames)} | "
-                        f"rollout_steps={first_episode_length} | "
-                        f"time={first_episode_time:.3f}s | "
-                        f"path={video_path}"
-                    )
-
-        if mean_reward > self.best_mean_reward:
+        score = evaluation_score(eval_result)
+        if self.best_task_score is None or score > self.best_task_score:
             old_best = self.best_mean_reward
+            self.best_task_score = score
             self.best_mean_reward = mean_reward
             self.model.save(str(self.best_model_path))
 
             if self.verbose:
                 print(
-                    f"[BestModel] nouveau meilleur score : "
-                    f"{old_best:.3f} -> {self.best_mean_reward:.3f} | "
+                    f"[BestModel] nouveau meilleur score de tâche : {score} | "
+                    f"reward {old_best:.3f} -> {self.best_mean_reward:.3f} | "
                     f"modèle sauvegardé dans {self.best_model_path}"
                 )

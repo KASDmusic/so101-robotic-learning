@@ -11,7 +11,7 @@ requires-python = ">=3.10"
 dependencies = [
     "numpy",
     "imageio",
-    "imageio[ffmpeg]",
+    "pillow",
     "gymnasium",
     "stable-baselines3",
     "opencv-python",

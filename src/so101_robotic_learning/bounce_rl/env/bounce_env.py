@@ -7,6 +7,7 @@ import numpy as np
 import mujoco
 import mujoco.viewer
 
+from .bounce_events import BounceConfig, BounceTracker
 
 class BounceEnv(gym.Env):
     """
@@ -25,6 +26,14 @@ class BounceEnv(gym.Env):
 
       => l'observation contient:
          [présent, t-1, t-2, t-10]
+
+    record_video:
+      Collecte les images caméra, y compris avec le viewer human.
+      pop_render_frames() récupère et vide le buffer.
+
+    video_camera_name:
+      Caméra de visualisation uniquement (render et vidéos), jamais dans obs.
+      None réutilise camera_name. Le rendu additionnel est créé à la demande.
 
     render_mode:
       - None: aucun rendu explicite
@@ -52,6 +61,16 @@ class BounceEnv(gym.Env):
         ball_mass: float = 0.003,
         latent_steps: np.ndarray | None = None,
         render_mode: str | None = None,
+        record_video: bool = False,
+        bounce_config: BounceConfig | None = None,
+        bounce_reward_weight: float = 5.0,
+        shaping_reward_weight: float = 0.05,
+        fall_penalty: float = 5.0,
+        video_camera_name: str | None = None,
+        video_width: int | None = None,
+        video_height: int | None = None,
+        render_profile: str = "standard",
+        video_render_profile: str = "standard",
     ):
         super().__init__()
 
@@ -65,11 +84,32 @@ class BounceEnv(gym.Env):
         self.reward = reward
         self.max_episode_steps = int(max_episode_steps)
         self.render_mode = render_mode
+        self.record_video = bool(record_video)
+        if render_profile not in ("standard", "train_fast") or video_render_profile not in ("standard", "train_fast"):
+            raise ValueError("Render profiles must be 'standard' or 'train_fast'.")
+        self.render_profile = render_profile
+        self.video_render_profile = video_render_profile
+        self._capture_episodes_remaining = None
+        self._capture_this_episode = True
+        self._last_observation_time = None
+        weights = (bounce_reward_weight, shaping_reward_weight, fall_penalty)
+        if any(not np.isfinite(w) or w < 0 for w in weights):
+            raise ValueError("Task reward weights must be finite and nonnegative.")
+        self.bounce_reward_weight = float(bounce_reward_weight)
+        self.shaping_reward_weight = float(shaping_reward_weight)
+        self.fall_penalty = float(fall_penalty)
         self.camera_name = camera_name
+        self.video_camera_name = video_camera_name or camera_name
+        self.video_width = int(video_width) if video_width is not None else width
+        self.video_height = int(video_height) if video_height is not None else height
+        if self.video_width <= 0 or self.video_height <= 0:
+            raise ValueError("Video dimensions must be positive.")
         self.width = width
         self.height = height
         self.frame_skip = int(frame_skip)
         self.mujoco_step_periode = float(mujoco_step_periode)
+        if self.frame_skip < 1 or not np.isfinite(self.mujoco_step_periode) or self.mujoco_step_periode <= 0:
+            raise ValueError("frame_skip and mujoco_step_periode must be positive.")
 
         self.step_count = 0
 
@@ -91,17 +131,26 @@ class BounceEnv(gym.Env):
 
         # Caméra RGB throttlée sur temps simulé
         self.camera_fps = float(camera_fps)
+        if not np.isfinite(self.camera_fps) or self.camera_fps <= 0:
+            raise ValueError("camera_fps must be finite and positive.")
+        if self.render_profile == "train_fast":
+            self.camera_fps = min(self.camera_fps, 1.0 / (self.frame_skip * self.mujoco_step_periode))
         self.camera_period = 1.0 / self.camera_fps
         self.next_frame_time = 0.0
 
         self.model = mujoco.MjModel.from_xml_path(xml_path)
+        self._standard_offsamples = int(self.model.vis.quality.offsamples)
         self.model.opt.timestep = mujoco_step_periode
         self.data = mujoco.MjData(self.model)
+        self.bounce_tracker = BounceTracker(self.model, bounce_config)
 
         # Vérifie que la caméra existe
         cam_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_CAMERA, camera_name)
         if cam_id == -1:
             raise ValueError(f'Camera "{camera_name}" introuvable dans le XML.')
+        video_cam_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_CAMERA, self.video_camera_name)
+        if video_cam_id == -1:
+            raise ValueError(f'Video camera "{self.video_camera_name}" introuvable dans le XML.')
 
         # Action space: commandes normalisées [-1, 1]
         self.action_space = spaces.Box(
@@ -132,7 +181,8 @@ class BounceEnv(gym.Env):
         )
 
         # Renderer offscreen pour rgb_array / rgb_array_list / obs["image"]
-        self.renderer = mujoco.Renderer(self.model, height=height, width=width)
+        self.renderer = self._create_renderer(width, height, self.render_profile)
+        self.video_renderer = None
 
         # Viewer interactif pour human
         self.viewer = None
@@ -143,6 +193,7 @@ class BounceEnv(gym.Env):
 
         # Dernière image rendue (non concaténée)
         self._last_image = np.zeros((height, width, 3), dtype=np.uint8)
+        self._last_video_image = np.zeros((self.video_height, self.video_width, 3), dtype=np.uint8)
 
         # Historiques de snapshots par step env
         # On stocke les observations non concaténées
@@ -151,6 +202,7 @@ class BounceEnv(gym.Env):
 
         # Buffer des frames pour render_mode="rgb_array_list"
         self._rendered_frames = []
+        self._observation_frames = []
 
     # -------------------------
     # Paramètres dynamiques
@@ -191,25 +243,73 @@ class BounceEnv(gym.Env):
     # -------------------------
     # Observations / rendu caméra
     # -------------------------
+    def _create_renderer(self, width, height, profile):
+        # Samples belong to each OpenGL framebuffer. Restore model settings so
+        # a standard external renderer can coexist with a fast policy renderer.
+        previous = self.model.vis.quality.offsamples
+        self.model.vis.quality.offsamples = 0 if profile == "train_fast" else self._standard_offsamples
+        try:
+            renderer = mujoco.Renderer(self.model, height=height, width=width)
+        finally:
+            self.model.vis.quality.offsamples = previous
+        if profile == "train_fast":
+            renderer.scene.flags[mujoco.mjtRndFlag.mjRND_SHADOW] = False
+            renderer.scene.flags[mujoco.mjtRndFlag.mjRND_REFLECTION] = False
+        return renderer
+
+    def set_video_capture_limit(self, episodes=None):
+        """Allow only the next N resets to capture video; None restores normal use.
+
+        Disabling also takes effect immediately for a capped evaluation episode.
+        Automatic VecEnv resets consume the budget just like explicit resets.
+        """
+        if episodes is not None and (not isinstance(episodes, int) or episodes < 0):
+            raise ValueError("Capture limit must be a nonnegative integer or None.")
+        self._capture_episodes_remaining = episodes
+        if episodes == 0:
+            self._capture_this_episode = False
+
     def _store_frame_if_needed(self, frame: np.ndarray):
-        if self.render_mode == "rgb_array_list":
+        if self._capture_this_episode and (self.render_mode == "rgb_array_list" or self.record_video):
             self._rendered_frames.append(frame.copy())
+            # Reuse the unstacked policy camera pixels, with exactly the same
+            # timestamps as the external view. No extra render is necessary.
+            self._observation_frames.append(self._last_image.copy())
 
     def _maybe_update_camera(self):
         """
-        Met à jour l'image caméra UNIQUEMENT à camera_fps simulé.
-        Entre deux frames, on conserve self._last_image.
-
-        En mode rgb_array_list, chaque nouvelle frame effectivement calculée
-        est aussi ajoutée dans self._rendered_frames.
+        En profil standard, actualise les pixels à camera_fps simulé.
+        En profil train_fast, actualise l'observation à chaque décision et
+        réutilise ces pixels pour la vidéo, limitée à camera_fps.
         """
-        if self.data.time < self.next_frame_time:
+        fast = self.render_profile == "train_fast"
+        frame_due = self.data.time + 1e-12 >= self.next_frame_time
+        if not fast and not frame_due:
+            return
+        # Fast mode is called only at reset and decision boundaries. Repeated
+        # render() calls at the same simulation time reuse the observation.
+        if not fast or self._last_observation_time != self.data.time:
+            self.renderer.update_scene(self.data, camera=self.camera_name)
+            self._last_image = self.renderer.render().copy()
+            self._last_observation_time = float(self.data.time)
+        if not frame_due:
             return
 
-        self.renderer.update_scene(self.data, camera=self.camera_name)
-        self._last_image = self.renderer.render()
-
-        self._store_frame_if_needed(self._last_image)
+        # Observation pixels always come from camera_name. Render the external
+        # view only when a visualization or recording is requested.
+        if self._capture_this_episode and (self.record_video or self.render_mode in ("rgb_array", "rgb_array_list")):
+            if (self.video_camera_name == self.camera_name
+                    and self.video_width == self.width and self.video_height == self.height
+                    and self.render_profile == self.video_render_profile):
+                self._last_video_image = self._last_image.copy()
+            else:
+                if self.video_renderer is None:
+                    self.video_renderer = self._create_renderer(
+                        self.video_width, self.video_height, self.video_render_profile,
+                    )
+                self.video_renderer.update_scene(self.data, camera=self.video_camera_name)
+                self._last_video_image = self.video_renderer.render().copy()
+            self._store_frame_if_needed(self._last_video_image)
 
         # avancer le prochain créneau caméra
         self.next_frame_time += self.camera_period
@@ -258,6 +358,13 @@ class BounceEnv(gym.Env):
         self.next_frame_time = 0.0
         self.step_count = 0
         self._rendered_frames = []
+        self._observation_frames = []
+        self._last_observation_time = None
+        self._capture_this_episode = (
+            self._capture_episodes_remaining is None or self._capture_episodes_remaining > 0
+        )
+        if self._capture_episodes_remaining is not None and self._capture_episodes_remaining > 0:
+            self._capture_episodes_remaining -= 1
 
         mujoco.mj_resetData(self.model, self.data)
 
@@ -267,6 +374,7 @@ class BounceEnv(gym.Env):
             self.data.ctrl[act_id] = self.data.qpos[qpos_index]
 
         mujoco.mj_forward(self.model, self.data)
+        self.bounce_tracker.reset(self.data)
 
         self.next_frame_time = self.data.time
         self._maybe_update_camera()
@@ -288,7 +396,7 @@ class BounceEnv(gym.Env):
         if self.render_mode == "human":
             self._sync_human_viewer()
 
-        return obs, {}
+        return obs, {"task_metrics": self.bounce_tracker.metrics(self.data)}
 
     def step(self, action):
         self.step_count += 1
@@ -302,8 +410,21 @@ class BounceEnv(gym.Env):
         )
         self.data.ctrl[:] = np.asarray(actions_rescaled, dtype=np.float32)
 
+        bounce_events = []
         for _ in range(self.frame_skip):
+            before = self.bounce_tracker.sample(self.data)
             mujoco.mj_step(self.model, self.data)
+            # Synchronize positions, contacts and velocities after integration.
+            mujoco.mj_forward(self.model, self.data)
+            event = self.bounce_tracker.update(before, self.bounce_tracker.sample(self.data))
+            if event is not None:
+                bounce_events.append(event)
+            if self.render_profile != "train_fast":
+                self._maybe_update_camera()
+            if self.bounce_tracker.time_to_fall is not None:
+                break
+
+        if self.render_profile == "train_fast":
             self._maybe_update_camera()
 
         current_image = self._last_image.copy()
@@ -322,39 +443,58 @@ class BounceEnv(gym.Env):
             self._sync_human_viewer()
 
         if self.reward is not None:
-            reward, reward_info = self.reward.compute(self.model, self.data)
+            shaping_reward, reward_info = self.reward.compute(self.model, self.data)
         else:
-            reward = 0.0
+            shaping_reward = 0.0
             reward_info = {}
 
-        terminated = False
+        terminated = self.bounce_tracker.time_to_fall is not None
         truncated = False
-
-        body_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, "ball")
-        if body_id != -1:
-            ball_height = self.data.xpos[body_id, 2]
-            if ball_height < 0.1:
-                terminated = True
 
         if self.step_count >= self.max_episode_steps:
             truncated = True
             self.step_count = 0
 
-        info = reward_info
+        info = dict(reward_info)
+        event_reward = self.bounce_reward_weight * len(bounce_events)
+        penalty = self.fall_penalty if terminated else 0.0
+        reward = event_reward + self.shaping_reward_weight * shaping_reward - penalty
+        info.update({
+            "reward_shaping": float(shaping_reward),
+            "reward_bounces": event_reward,
+            "penalty_fall": -penalty,
+            "reward_total": float(reward),
+            "bounce_events": bounce_events,
+            "task_metrics": self.bounce_tracker.metrics(self.data),
+        })
+        # VecEnv resets immediately on done; preserve frames before reset clears them.
+        if (terminated or truncated) and self._capture_this_episode and (self.record_video or self.render_mode == "rgb_array_list"):
+            info["terminal_render_frames"] = self._rendered_frames.copy()
+            info["terminal_observation_frames"] = self._observation_frames.copy()
 
         print(f"[Step] time={time.time() - t0:.3f}s | reward={reward:.3f}")
         return obs, reward, terminated, truncated, info
 
+    def pop_render_frames(self):
+        """Drain camera frames independently of the human viewer/render mode."""
+        frames = self._rendered_frames
+        self._rendered_frames = []
+        return frames
+
+    def pop_observation_frames(self):
+        """Drain unstacked policy-camera frames for TensorBoard visualization."""
+        frames = self._observation_frames
+        self._observation_frames = []
+        return frames
+
     def render(self):
         if self.render_mode == "rgb_array":
             self._maybe_update_camera()
-            return self._last_image
+            return self._last_video_image
 
         if self.render_mode == "rgb_array_list":
             self._maybe_update_camera()
-            temp_frames = self._rendered_frames.copy()
-            self._rendered_frames = []
-            return temp_frames
+            return self.pop_render_frames()
 
         if self.render_mode == "human":
             self._sync_human_viewer()
@@ -373,3 +513,6 @@ class BounceEnv(gym.Env):
         if self.renderer is not None:
             self.renderer.close()
             self.renderer = None
+        if self.video_renderer is not None:
+            self.video_renderer.close()
+            self.video_renderer = None

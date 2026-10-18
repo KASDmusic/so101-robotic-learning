@@ -135,10 +135,11 @@ python [script_name].py
 
 - [ ] **Make the number of latent states dynamic** (accept a list of length `nb_states_latents` as a parameter, where `list[0]` is the step to use).
 - [ ] **Add dates to model and video filenames.**
-- [ ] **Add support for `SubprocVecEnv`.**
-- [ ] **Fix and implement rewards.**
+- [ ] **Fix and implement rewards and penalities**
   - [ ] Create a composite reward for `RewardMultiObjectif`.
-  - [ ] Implement additional rewards.
+  - [ ] Implement additional rewards :
+    - [ ] Penality depending of the distance with the closest point of a line beetween the paddle;
+    - [ ] Reset the environnement also if the paddle touch the ground or if the ball is too far of the robot (because the model actually learn to launch the ball far away one time);
 - [ ] **Add variations to environment initialization.**
   - [ ] Implement a seeding system.
   - [ ] Vary the ball’s position and velocity vector (its trajectory must head toward the paddle).
@@ -147,6 +148,7 @@ python [script_name].py
   - [ ] Vary the lighting.
 - [ ] **Run a hyperparameter grid search.**
 - [ ] **When it is working, remove information unrelated to the arm (e.g., ball information).**
+- [ ] **Add support for `SubprocVecEnv` ?**
 - [ ] **Optimize environment execution?** (Test whether removing the paddle’s collision mesh and/or the arm’s mesh has a significant impact, reducing frame rendering and explore other optimizations, such as JAX.)
 - [ ] **Sim2Real.**
 

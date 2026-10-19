@@ -133,7 +133,7 @@ python [script_name].py
 
 #### TODO
 
-- [ ] **Make the number of latent states dynamic** (accept a list of length `nb_states_latents` as a parameter, where `list[0]` is the step to use).
+- [x] **Make the number of latent states dynamic** (accept a list of length `nb_states_latents` as a parameter, where `list[0]` is the step to use).
 - [ ] **Add dates to model and video filenames.**
 - [ ] **Fix and implement rewards and penalities**
   - [ ] Create a composite reward for `RewardMultiObjectif`.

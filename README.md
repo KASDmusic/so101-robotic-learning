@@ -138,12 +138,13 @@ python [script_name].py
 
 #### TODO
 
-- [ ] **Fix and implement rewards and penalities**
+- [x] **Fix and implement rewards and penalities**
   - [x] Create a composite reward for `RewardMultiObjectif`.
   - [x] Implement additional rewards :
     - [x] Penalize ball distance to a vertical 1 m segment starting 20 cm above the paddle centre.
     - [x] End the episode if the paddle touches the ground or the ball moves more than 2 m from the paddle.
     - [x] Penalize absolute actuator mechanical work, including braking.
+- [ ] **Start training from a pretrained model**
 - [ ] **Add variations to environment initialization.**
   - [ ] Implement a seeding system.
   - [ ] Vary the ball’s position and velocity vector (its trajectory must head toward the paddle).

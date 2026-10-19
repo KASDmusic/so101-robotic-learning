@@ -4,6 +4,20 @@ import numpy as np
 import mujoco
 
 
+def distance_to_vertical_segment(point, paddle_center, start_height=0.2, length=1.0):
+    """Return distance and nearest point on a finite, world-Z-aligned segment.
+
+    The lower endpoint follows the paddle centre with a vertical start_height
+    offset. The upper endpoint is length metres above that lower endpoint.
+    Inputs are never modified. Geometry parameters are validated by BounceEnv.
+    """
+    point = np.asarray(point, dtype=np.float64)
+    closest = np.array(paddle_center, dtype=np.float64, copy=True)
+    lower_z = closest[2] + start_height
+    closest[2] = np.clip(point[2], lower_z, lower_z + length)
+    return float(np.linalg.norm(point - closest)), closest
+
+
 def safe_normalize(v: np.ndarray, eps: float = 1e-8) -> np.ndarray:
     n = np.linalg.norm(v)
     if n < eps:

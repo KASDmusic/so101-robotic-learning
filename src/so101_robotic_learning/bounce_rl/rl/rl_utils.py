@@ -287,7 +287,7 @@ def summarize_task_metrics(episodes):
         values = [episode[key] for episode in measured if episode.get(key) is not None]
         return float(np.mean(values)) if values else None
 
-    return {
+    summary = {
         "success_rate": mean("success"),
         "mean_valid_bounces": mean("valid_bounces"),
         "mean_max_consecutive_bounces": mean("max_consecutive_bounces"),
@@ -298,8 +298,17 @@ def summarize_task_metrics(episodes):
         "ball_too_far_rate": mean("ball_too_far"),
         "mean_mechanical_energy_j": mean("mechanical_energy_j"),
         "mean_energy_penalty": mean("energy_penalty"),
+        "mean_ball_segment_distance_m": mean("mean_ball_segment_distance_m"),
+        "mean_ball_segment_penalty": mean("ball_segment_penalty"),
         "mean_contact_dispersion_m": mean("contact_dispersion_m"),
     }
+    component_names = sorted({name for episode in measured
+                              for name in episode.get("reward_components", {})})
+    for name in component_names:
+        summary[f"reward_components/{name}"] = float(np.mean([
+            episode.get("reward_components", {}).get(name, 0.0) for episode in measured
+        ]))
+    return summary
 
 
 def evaluation_score(result):

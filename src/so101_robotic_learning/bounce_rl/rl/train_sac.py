@@ -30,7 +30,9 @@ def make_env(
     env_kwargs=None,
 ):
     def _init():
-        env_reward = reward if reward is not None else BallAlignedOnZAndAbovePaddleReward()
+        env_reward = reward
+        if env_reward is None and (env_kwargs or {}).get("reward_composite") is None:
+            env_reward = BallAlignedOnZAndAbovePaddleReward()
 
         env = BounceEnv(
             xml_path=str(xml_path),

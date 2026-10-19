@@ -1,4 +1,5 @@
 import time
+from copy import deepcopy
 from collections import deque
 
 import gymnasium as gym
@@ -8,6 +9,10 @@ import mujoco
 import mujoco.viewer
 
 from .bounce_events import BounceConfig, BounceTracker
+from ..rewards.reward_utils import distance_to_vertical_segment
+from ..rewards.reward_multi_objectif import (
+    RewardComponent, RewardContext, RewardMultiObjectif, make_bounce_reward,
+)
 
 class BounceEnv(gym.Env):
     """
@@ -72,6 +77,10 @@ class BounceEnv(gym.Env):
         render_profile: str = "standard",
         video_render_profile: str = "standard",
         energy_penalty_weight: float = 0.0,
+        ball_segment_penalty_weight: float = 0.0,
+        ball_segment_start_height: float = 0.2,
+        ball_segment_length: float = 1.0,
+        reward_composite: RewardMultiObjectif | None = None,
     ):
         super().__init__()
 
@@ -82,7 +91,12 @@ class BounceEnv(gym.Env):
             )
 
         self.xml_path = xml_path
-        self.reward = reward
+        self.reward = deepcopy(reward) if isinstance(reward, RewardComponent) else reward
+        if reward_composite is not None:
+            if not isinstance(reward_composite, RewardMultiObjectif):
+                raise TypeError("reward_composite must be a RewardMultiObjectif.")
+            if reward is not None:
+                raise ValueError("Use reward for auxiliary shaping or reward_composite for the full objective, not both.")
         self.max_episode_steps = int(max_episode_steps)
         self.render_mode = render_mode
         self.record_video = bool(record_video)
@@ -93,7 +107,8 @@ class BounceEnv(gym.Env):
         self._capture_episodes_remaining = None
         self._capture_this_episode = True
         self._last_observation_time = None
-        weights = (bounce_reward_weight, shaping_reward_weight, fall_penalty, energy_penalty_weight)
+        weights = (bounce_reward_weight, shaping_reward_weight, fall_penalty,
+                   energy_penalty_weight, ball_segment_penalty_weight)
         if any(not np.isfinite(w) or w < 0 for w in weights):
             raise ValueError("Task reward weights must be finite and nonnegative.")
         self.bounce_reward_weight = float(bounce_reward_weight)
@@ -101,6 +116,25 @@ class BounceEnv(gym.Env):
         self.fall_penalty = float(fall_penalty)
         self.energy_penalty_weight = float(energy_penalty_weight)
         self._episode_mechanical_energy_j = 0.0
+        if not np.isfinite(ball_segment_start_height) or ball_segment_start_height < 0:
+            raise ValueError("ball_segment_start_height must be finite and nonnegative.")
+        if not np.isfinite(ball_segment_length) or ball_segment_length <= 0:
+            raise ValueError("ball_segment_length must be finite and positive.")
+        self.ball_segment_penalty_weight = float(ball_segment_penalty_weight)
+        self.ball_segment_start_height = float(ball_segment_start_height)
+        self.ball_segment_length = float(ball_segment_length)
+        self._episode_segment_distance_integral_m_s = 0.0
+        self.reward_composite = (
+            deepcopy(reward_composite) if reward_composite is not None else
+            make_bounce_reward(
+                self.reward, bounce_weight=self.bounce_reward_weight,
+                shaping_weight=self.shaping_reward_weight, failure_weight=self.fall_penalty,
+                energy_weight=self.energy_penalty_weight, segment_weight=self.ball_segment_penalty_weight,
+            )
+        )
+        self._episode_energy_penalty = 0.0
+        self._episode_ball_segment_penalty = 0.0
+        self._episode_reward_components = {}
         self.camera_name = camera_name
         self.video_camera_name = video_camera_name or camera_name
         self.video_width = int(video_width) if video_width is not None else width
@@ -326,9 +360,16 @@ class BounceEnv(gym.Env):
 
     def _task_metrics(self):
         metrics = self.bounce_tracker.metrics(self.data)
+        elapsed = metrics["elapsed_sim_time_s"]
         metrics.update({
             "mechanical_energy_j": self._episode_mechanical_energy_j,
-            "energy_penalty": -self.energy_penalty_weight * self._episode_mechanical_energy_j,
+            "energy_penalty": self._episode_energy_penalty,
+            "segment_distance_integral_m_s": self._episode_segment_distance_integral_m_s,
+            "mean_ball_segment_distance_m": (
+                self._episode_segment_distance_integral_m_s / elapsed if elapsed > 0 else None
+            ),
+            "ball_segment_penalty": self._episode_ball_segment_penalty,
+            "reward_components": dict(self._episode_reward_components),
         })
         return metrics
 
@@ -370,6 +411,10 @@ class BounceEnv(gym.Env):
         self.step_count = 0
         self._rendered_frames = []
         self._episode_mechanical_energy_j = 0.0
+        self._episode_segment_distance_integral_m_s = 0.0
+        self._episode_energy_penalty = 0.0
+        self._episode_ball_segment_penalty = 0.0
+        self._episode_reward_components = {}
         self._observation_frames = []
         self._last_observation_time = None
         self._capture_this_episode = (
@@ -387,6 +432,7 @@ class BounceEnv(gym.Env):
 
         mujoco.mj_forward(self.model, self.data)
         self.bounce_tracker.reset(self.data)
+        self.reward_composite.reset(self.model, self.data)
 
         self.next_frame_time = self.data.time
         self._maybe_update_camera()
@@ -424,6 +470,7 @@ class BounceEnv(gym.Env):
 
         bounce_events = []
         energy_step_j = 0.0
+        segment_distance_integral_m_s = 0.0
         for _ in range(self.frame_skip):
             before = self.bounce_tracker.sample(self.data)
             mujoco.mj_step(self.model, self.data)
@@ -433,6 +480,12 @@ class BounceEnv(gym.Env):
             # before integrating so opposite motor powers cannot cancel out.
             power_w = float(np.sum(np.abs(self.data.actuator_force * self.data.actuator_velocity)))
             energy_step_j += power_w * self.model.opt.timestep
+            ball_segment_distance_m, segment_closest_point = distance_to_vertical_segment(
+                self.data.geom_xpos[self.bounce_tracker.ball],
+                self.data.site_xpos[self.bounce_tracker.site],
+                self.ball_segment_start_height, self.ball_segment_length,
+            )
+            segment_distance_integral_m_s += ball_segment_distance_m * self.model.opt.timestep
             event = self.bounce_tracker.update(before, self.bounce_tracker.sample(self.data))
             if event is not None:
                 bounce_events.append(event)
@@ -442,6 +495,7 @@ class BounceEnv(gym.Env):
                 break
 
         self._episode_mechanical_energy_j += energy_step_j
+        self._episode_segment_distance_integral_m_s += segment_distance_integral_m_s
 
         if self.render_profile == "train_fast":
             self._maybe_update_camera()
@@ -461,12 +515,6 @@ class BounceEnv(gym.Env):
         if self.render_mode == "human":
             self._sync_human_viewer()
 
-        if self.reward is not None:
-            shaping_reward, reward_info = self.reward.compute(self.model, self.data)
-        else:
-            shaping_reward = 0.0
-            reward_info = {}
-
         terminated = self.bounce_tracker.termination_reason is not None
         truncated = False
 
@@ -474,18 +522,36 @@ class BounceEnv(gym.Env):
             truncated = True
             self.step_count = 0
 
-        info = dict(reward_info)
-        event_reward = self.bounce_reward_weight * len(bounce_events)
-        penalty = self.fall_penalty if terminated else 0.0
-        energy_penalty = self.energy_penalty_weight * energy_step_j
-        reward = event_reward + self.shaping_reward_weight * shaping_reward - penalty - energy_penalty
+        context = RewardContext(
+            bounce_count=len(bounce_events), failed=terminated, energy_j=energy_step_j,
+            segment_distance_integral_m_s=segment_distance_integral_m_s,
+        )
+        reward, reward_info = self.reward_composite.compute(self.model, self.data, context)
+        components = reward_info["components"]
+        for name, component in components.items():
+            self._episode_reward_components[name] = (
+                self._episode_reward_components.get(name, 0.0) + component["contribution"]
+            )
+        # Preserve legacy channels for the canonical top-level objective names.
+        def contribution(name):
+            return components.get(name, {}).get("contribution", 0.0)
+
+        shaping = components.get("shaping", {})
+        info = dict(shaping.get("details", {}))
+        self._episode_energy_penalty += contribution("energy")
+        self._episode_ball_segment_penalty += contribution("ball_segment")
         info.update({
-            "reward_shaping": float(shaping_reward),
-            "reward_bounces": event_reward,
-            "penalty_fall": -self.fall_penalty if self.bounce_tracker.time_to_fall is not None else 0.0,
-            "penalty_failure": -penalty,
+            "reward_shaping": shaping.get("value", 0.0),
+            "reward_bounces": contribution("bounces"),
+            "penalty_fall": contribution("failure") if self.bounce_tracker.time_to_fall is not None else 0.0,
+            "penalty_failure": contribution("failure"),
             "energy_step_j": energy_step_j,
-            "penalty_energy": -energy_penalty,
+            "penalty_energy": contribution("energy"),
+            "ball_segment_distance_m": ball_segment_distance_m,
+            "segment_closest_point": segment_closest_point.tolist(),
+            "segment_distance_integral_m_s": segment_distance_integral_m_s,
+            "penalty_ball_segment": contribution("ball_segment"),
+            "reward_components": components,
             "termination_reason": self.bounce_tracker.termination_reason,
             "reward_total": float(reward),
             "bounce_events": bounce_events,

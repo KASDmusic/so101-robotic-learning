@@ -14,6 +14,7 @@ from stable_baselines3.common.logger import configure
 from tensorboard.backend.event_processing.event_accumulator import EventAccumulator
 
 from so101_robotic_learning.bounce_rl.rl import train_ppo, train_sac
+from so101_robotic_learning.bounce_rl.rewards import ConstantReward, RewardMultiObjectif
 from so101_robotic_learning.bounce_rl.rl.rl_utils import (
     EvalVideoSaveBestCallback, combine_camera_frames, log_tensorboard_video, summarize_task_metrics,
 )
@@ -45,7 +46,8 @@ class TensorBoardLoggingTests(unittest.TestCase):
                 env_kwargs={"max_episode_steps": 2, "frame_skip": 1,
                             "video_camera_name": "overview_cam",
                             "video_width": 96, "video_height": 64,
-                            "energy_penalty_weight": 0.01},
+                            "energy_penalty_weight": 0.01,
+                            "ball_segment_penalty_weight": 1.0},
                 eval_every_episodes=1, n_eval_episodes=1, eval_max_steps=2,
                 save_eval_video=record_video, eval_render_mode=None,
                 print_spaces=False, verbose=0, callback_verbose=0,
@@ -62,7 +64,8 @@ class TensorBoardLoggingTests(unittest.TestCase):
             for metric in ("success_rate", "mean_valid_bounces", "mean_max_consecutive_bounces",
                            "mean_duration_s", "fall_rate", "paddle_ground_contact_rate",
                            "ball_too_far_rate", "mean_mechanical_energy_j",
-                           "mean_energy_penalty", "mean_reward", "std_reward"):
+                           "mean_energy_penalty", "mean_ball_segment_distance_m",
+                           "mean_ball_segment_penalty", "mean_reward", "std_reward"):
                 tag = f"eval/{metric}"
                 self.assertIn(tag, scalars)
                 self.assertEqual([event.step for event in scalars[tag]], expected_steps)
@@ -72,6 +75,16 @@ class TensorBoardLoggingTests(unittest.TestCase):
             # No fall and no impacts in this tiny run: undefined is not zero.
             self.assertNotIn("eval/mean_time_to_fall_s", scalars)
             self.assertNotIn("eval/mean_contact_dispersion_m", scalars)
+            for name in ("bounces", "shaping", "failure", "energy", "ball_segment"):
+                key = f"reward_components/{name}"
+                events = scalars[f"eval/{key}"]
+                self.assertEqual([event.step for event in events], expected_steps)
+                for event, report in zip(events, reports):
+                    self.assertAlmostEqual(event.value, report["task_metrics"][key], places=6)
+            for report in reports:
+                contributions = [value for key, value in report["task_metrics"].items()
+                                 if key.startswith("reward_components/")]
+                self.assertAlmostEqual(sum(contributions), report["mean_reward"], places=5)
             if record_video:
                 events = next((Path(tmp) / "runs").rglob("events.out.tfevents.*"))
                 images = EventAccumulator(str(events.parent), size_guidance={"images": 0})
@@ -101,6 +114,31 @@ class TensorBoardLoggingTests(unittest.TestCase):
             self.assertTrue(scalars[tag])
             self.assertTrue(all(np.isfinite(event.value) for event in scalars[tag]))
             self.assertTrue(all(event.step > after_step for event in scalars[tag]))
+
+    def test_custom_composite_persists_its_own_components_for_both_algorithms(self):
+        objective = (RewardMultiObjectif().add_reward("alive", ConstantReward(2), .5)
+                     .add_penalty("cost", ConstantReward(1), .25))
+        for module, kwargs in (
+            (train_ppo, {"n_steps": 4, "batch_size": 4, "n_epochs": 1,
+                         "pi_layers": (16,), "vf_layers": (16,)}),
+            (train_sac, {"buffer_size": 16, "learning_starts": 100,
+                         "pi_layers": (16,), "qf_layers": (16,)}),
+        ):
+            with self.subTest(algorithm=module.__name__), tempfile.TemporaryDirectory() as tmp:
+                module.train(
+                    xml_path=XML, root=tmp, total_timesteps=4,
+                    env_kwargs={"max_episode_steps": 2, "frame_skip": 1,
+                                "reward_composite": objective},
+                    eval_every_episodes=1, n_eval_episodes=1, eval_max_steps=2,
+                    save_eval_video=False, eval_render_mode=None,
+                    print_spaces=False, verbose=0, callback_verbose=0, device="cpu", **kwargs,
+                )
+                scalars = read_scalars(Path(tmp) / "runs")
+                for tag, expected in (("eval/reward_components/alive", 2.),
+                                      ("eval/reward_components/cost", -.5),
+                                      ("eval/mean_reward", 1.5)):
+                    self.assertEqual([event.step for event in scalars[tag]], [2, 4])
+                    self.assertTrue(all(event.value == expected for event in scalars[tag]))
 
     def test_ppo_persists_every_evaluation_within_one_rollout(self):
         self.check_training(train_ppo, {

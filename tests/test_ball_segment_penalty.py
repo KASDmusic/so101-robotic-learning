@@ -10,12 +10,14 @@ from stable_baselines3.common.vec_env import DummyVecEnv
 from so101_robotic_learning.bounce_rl.env.bounce_env import BounceEnv
 from so101_robotic_learning.bounce_rl.rewards.reward_utils import distance_to_vertical_segment
 
+from reward_fixtures import task_reward
+
 FIXTURE = Path(__file__).parent / "assets/termination_fixture.xml"
 
 
 class BallSegmentPenaltyTests(unittest.TestCase):
-    def make_env(self, **kwargs):
-        env = BounceEnv(str(FIXTURE), render_profile="train_fast", **kwargs)
+    def make_env(self, segment_weight=0., energy_weight=0., shaping=None, **kwargs):
+        env = BounceEnv(str(FIXTURE), reward=task_reward(shaping=shaping, energy=energy_weight, segment=segment_weight), render_profile="train_fast", **kwargs)
         self.addCleanup(env.close)
         env.reset()
         return env
@@ -47,7 +49,7 @@ class BallSegmentPenaltyTests(unittest.TestCase):
                 np.testing.assert_array_equal(centre, [1., 2., 3.])
 
     def test_constant_distance_has_expected_time_integrated_penalty(self):
-        env = self.make_env(frame_skip=20, ball_segment_penalty_weight=2.)
+        env = self.make_env(frame_skip=20, segment_weight=2.)
         self.place_ball(env, np.array([.3, .4, .7]))
         _, reward, terminated, truncated, info = env.step(np.zeros(1))
         self.assertFalse(terminated or truncated)
@@ -59,7 +61,7 @@ class BallSegmentPenaltyTests(unittest.TestCase):
         self.assertAlmostEqual(info["task_metrics"]["ball_segment_penalty"], reward)
 
     def test_ball_on_segment_has_no_penalty(self):
-        env = self.make_env(ball_segment_penalty_weight=2.)
+        env = self.make_env(segment_weight=2.)
         self.place_ball(env, np.array([0., 0., .7]))
         _, reward, _, _, info = env.step(np.zeros(1))
         self.assertEqual(reward, 0.)
@@ -67,7 +69,7 @@ class BallSegmentPenaltyTests(unittest.TestCase):
 
     def test_partition_and_zero_weight_preserve_physics_and_reset_clears_metrics(self):
         baseline = self.make_env(frame_skip=20)
-        penalized = self.make_env(frame_skip=5, ball_segment_penalty_weight=2.)
+        penalized = self.make_env(frame_skip=5, segment_weight=2.)
         for env in (baseline, penalized):
             self.place_ball(env, np.array([.3, .4, .7]))
         baseline_obs, baseline_reward, _, _, baseline_info = baseline.step(np.zeros(1))
@@ -95,7 +97,7 @@ class BallSegmentPenaltyTests(unittest.TestCase):
         self.assertAlmostEqual(info["ball_segment_distance_m"], np.sqrt(.3 ** 2 + .22 ** 2))
 
     def test_early_failure_integrates_only_one_substep_and_autoreset_preserves_report(self):
-        env = self.make_env(frame_skip=20, ball_segment_penalty_weight=2.)
+        env = self.make_env(frame_skip=20, segment_weight=2.)
         vec = DummyVecEnv([lambda: env])
         self.addCleanup(vec.close)
         vec.reset()
@@ -110,7 +112,7 @@ class BallSegmentPenaltyTests(unittest.TestCase):
 
     def test_penalty_adds_to_energy_shaping_and_failure_costs(self):
         shaping = SimpleNamespace(compute=lambda model, data: (2., {}))
-        env = self.make_env(reward=shaping, ball_segment_penalty_weight=3., energy_penalty_weight=2.)
+        env = self.make_env(shaping=shaping, segment_weight=3., energy_weight=2.)
         self.place_ball(env, np.array([2.01, 0., .7]))
         env.data.qvel[0] = .2
         mujoco.mj_forward(env.model, env.data)
@@ -124,14 +126,17 @@ class BallSegmentPenaltyTests(unittest.TestCase):
 
     def test_invalid_geometry_and_weights_are_rejected(self):
         for kwargs in (
-            {"ball_segment_penalty_weight": -1.}, {"ball_segment_penalty_weight": np.nan},
-            {"ball_segment_penalty_weight": np.inf}, {"ball_segment_start_height": -.1},
+            {"segment_weight": -1.}, {"segment_weight": np.nan},
+            {"segment_weight": np.inf}, {"ball_segment_start_height": -.1},
             {"ball_segment_start_height": np.nan}, {"ball_segment_start_height": np.inf},
             {"ball_segment_length": 0.}, {"ball_segment_length": -1.},
             {"ball_segment_length": np.nan}, {"ball_segment_length": np.inf},
         ):
             with self.subTest(kwargs=kwargs), self.assertRaises(ValueError):
-                BounceEnv(str(FIXTURE), **kwargs)
+                if "segment_weight" in kwargs:
+                    task_reward(segment=kwargs["segment_weight"])
+                else:
+                    BounceEnv(str(FIXTURE), **kwargs)
 
 
 if __name__ == "__main__":

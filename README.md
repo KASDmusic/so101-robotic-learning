@@ -13,6 +13,7 @@
   - **Energy penalty**: integrate absolute actuator mechanical work at every physics substep. Configurable weight, enabled at `0.01` in PPO/SAC notebooks, with episode totals and penalties logged in TensorBoard.
   - **Ball alignment penalty**: penalize distance to the nearest point on a vertical segment from 0.2 m to 1.2 m above `paddle_face`. Integrate over simulated time and expose configuration and metrics in PPO/SAC notebooks and TensorBoard.
   - **Composite rewards**: `RewardMultiObjectif` combines named weighted rewards, penalties and nested composites. Existing rewards remain compatible. Per-component contributions are available in episode reports and TensorBoard.
+  - **Unified reward API**: `reward` defines the full objective everywhere. Weights live in the composite, and geometric settings stay in `env_kwargs`. PPO/SAC notebooks and policy tests share the same configured reward.
   - **Corrected rewards**: computation without modifying the physics, local `paddle_face` frame, active face only, and a shared default reward for PPO/SAC.
   - **Metrics and checkpoints**: tracking of streaks, success, drops, and impact dispersion. Best-model selection based on juggling performance, with JSON reports.
   - **Reliable evaluation**: handling of vectorized environments, step limits, callback thresholds, and terminal frames before reset.
@@ -20,7 +21,7 @@
   - **Cameras**: external view reserved for visualization, gripper view retained for the agent, and synchronized GIFs of both views with a single slider. MP4 exports removed, including during tests.
   - **Updated notebooks**: current configurations, robust paths, dated runs, and old outputs cleared.
   - **Faster rendering**: `train_fast` profile, one frame per decision, and external camera limited to the recorded episode. Physics unchanged. Local speedup of approximately **6×**, excluding neural network training.
-  - **Validation**: **75 tests pass**, covering composite objectives, segment-distance and energy penalties, episode termination, notebooks and TensorBoard files.
+  - **Validation**: **78 tests pass**, covering the unified reward API, composite objectives, penalties, episode termination, notebooks and TensorBoard files.
 <!---
 
 ## Arborescence
@@ -175,7 +176,7 @@ python [script_name].py
 PPO and SAC end an episode when the ball falls below 0.1 m, the collision paddle
 contacts the ground, or the ball centre moves strictly more than 2 m from the
 `paddle_face` site (3D Euclidean distance). All checks run at every physics substep.
-The existing `fall_penalty` applies to each failure, once per terminal step.
+The default objective applies `FailurePenalty` with weight 5 to each failure, once per terminal step.
 Reaching the episode step limit remains a truncation without a failure penalty.
 
 Both notebooks expose `BounceConfig(max_ball_paddle_distance=2.0)`. Ground planes
@@ -190,17 +191,22 @@ Direct users of `BounceEnv` must call `reset()` after `terminated=True`.
 
 ### Mechanical energy penalty
 
-Each decision subtracts `energy_penalty_weight * energy_step_j` from its reward.
+The `EnergyPenalty` component subtracts its weight multiplied by `energy_step_j` from each decision reward.
 The energy proxy integrates `sum(abs(actuator_force * actuator_velocity)) * dt`
 at every executed physics substep, using end-of-substep samples. Motor and
 braking work both count positively. Opposite motor powers cannot cancel out.
 An early episode termination counts only the substeps actually simulated.
 
-Both notebooks set `energy_penalty_weight=0.01` in `env_kwargs`. This initial
-weight subtracts 0.01 reward per joule of absolute mechanical work and should
-be tuned using the task and energy metrics. Direct `BounceEnv` calls default
-to `0.0` for compatibility. Setting this weight to zero disables the penalty
-while retaining the energy measurements.
+The default objective and both notebooks use weight 0.01 for the `energy`
+component, subtracting 0.01 reward per joule of absolute mechanical work.
+Adjust it on the reward object before starting a run:
+
+```python
+reward.set_weight("energy", 0.01)
+```
+
+Weight zero disables its contribution while retaining the measurements.
+The same default objective is used by direct `BounceEnv`, PPO and SAC calls.
 
 Step info contains `energy_step_j` and the signed contribution `penalty_energy`.
 Episode `task_metrics` and JSON reports include cumulative `mechanical_energy_j`
@@ -224,23 +230,21 @@ this point is zero anywhere on the segment and positive outside it, including
 above and below the endpoints.
 
 Each physics substep adds `distance_m * dt` to a distance integral. The decision
-reward subtracts `ball_segment_penalty_weight * integral_m_s`, independently
+reward subtracts the `BallSegmentPenalty` weight times `integral_m_s`, independently
 of the energy and failure penalties and the existing reward shaping. The time
 integration avoids multiplying the penalty when reducing `frame_skip` and
 includes only executed substeps when an episode ends early.
 
-Both notebooks use these entries in `env_kwargs`:
+Both notebooks keep the geometry in `env_kwargs` and the weight in the reward:
 
 ```python
-"ball_segment_penalty_weight": 1.0,
-"ball_segment_start_height": 0.2,
-"ball_segment_length": 1.0,
+env_kwargs.update(ball_segment_start_height=0.2, ball_segment_length=1.0)
+reward.set_weight("ball_segment", 1.0)
 ```
 
-The weight is an initial tuning value in reward per metre-second. At weight
-1.0, remaining 0.5 m away for one simulated second subtracts 0.5 reward.
-Direct `BounceEnv` calls default to weight 0.0 for compatibility. Weight zero
-disables the penalty while retaining the measurements.
+The default weight is 1.0 reward per metre-second. Remaining 0.5 m away for one
+simulated second subtracts 0.5 reward. Weight zero disables this contribution
+while retaining the measurements.
 
 Step info exposes `ball_segment_distance_m`, `segment_closest_point`, the
 step's `segment_distance_integral_m_s` and its signed `penalty_ball_segment`.
@@ -252,28 +256,31 @@ every episode and the average distance is undefined before any simulated step.
 
 ### Composite multi-objective rewards
 
-`RewardMultiObjectif` implements the Composite pattern through the common
-`RewardComponent` interface. A child can be a leaf, an existing two-argument
-reward (automatically adapted), or another composite. The score is a weighted
-sum, with no implicit normalization:
+`reward` is the single parameter for the **complete objective** in `BounceEnv`
+and in PPO/SAC `train()` and `test()`. A provided objective is used as-is, with
+no extra shaping factor, bounce bonus or penalty added by the environment.
+Leaving it unset, or passing `None`, creates a fresh default composite:
 
-```text
-total = sum(weight * reward_value) - sum(weight * abs(penalty_value))
+| Component | Weight |
+|---|---:|
+| `bounces` | 5.0 |
+| `shaping` (alignment and paddle orientation) | 0.05 |
+| `failure` | 5.0 |
+| `energy` | 0.01 |
+| `ball_segment` | 1.0 |
+
+These defaults are identical for direct environments, training and policy tests.
+For a quick configuration:
+
+```python
+from so101_robotic_learning.bounce_rl.rewards import make_default_reward
+
+reward = make_default_reward()
+reward.set_weight("energy", 0.02)
+train_config["reward"] = reward
 ```
 
-`add_penalty` accepts positive costs and existing negative penalty scores
-without reversing the penalty into a bonus. Weights must be finite and
-nonnegative. Names must be nonempty and unique within a composite. Cycles and
-nonfinite scores are rejected. Weight zero disables the contribution but still
-computes its diagnostics.
-
-The default environment objective now uses the same composite with five
-canonical names: `bounces`, `shaping`, `failure`, `energy` and `ball_segment`.
-Existing scalar coefficients and notebook configurations retain their meanings.
-The current formula and the physical event detection are preserved.
-
-For a custom full objective, construct a tree and pass it in `env_kwargs`.
-This example also adds a ball-speed preference to the auxiliary shaping:
+For an explicit tree, as used in both training notebooks:
 
 ```python
 from so101_robotic_learning.bounce_rl.rewards import (
@@ -283,55 +290,51 @@ from so101_robotic_learning.bounce_rl.rewards import (
 from so101_robotic_learning.bounce_rl.rewards.reward_ball_aligned_on_z_and_above_paddle import (
     BallAlignedOnZAndAbovePaddleReward,
 )
-from so101_robotic_learning.bounce_rl.rewards.reward_ball_speed import BallSpeedReward
 
-geometry = (
-    RewardMultiObjectif()
-    .add_reward("alignment", BallAlignedOnZAndAbovePaddleReward())
-    .add_reward("speed", BallSpeedReward(target_ball_speed=2.0), weight=0.2)
-)
-objective = (
+reward = (
     RewardMultiObjectif()
     .add_reward("bounces", BounceReward(), weight=5.0)
-    .add_reward("shaping", geometry, weight=0.05)
+    .add_reward("shaping", BallAlignedOnZAndAbovePaddleReward(), weight=0.05)
     .add_penalty("failure", FailurePenalty(), weight=5.0)
     .add_penalty("energy", EnergyPenalty(), weight=0.01)
     .add_penalty("ball_segment", BallSegmentPenalty(), weight=1.0)
 )
-env_kwargs["reward_composite"] = objective
-train_config["reward"] = None
+train_config["reward"] = reward
 ```
 
-This works in both PPO and SAC. `reward_composite` replaces the entire default
-objective, so the old scalar reward weights are not applied a second time.
-Geometry settings such as `ball_segment_start_height` and `ball_segment_length`
-still configure the measurements. Episode termination is independent of the
-reward tree, so include `FailurePenalty` if failures should have a reward cost.
+Pass that same object to policy tests, for example
+`train_sac.test(..., reward=train_config["reward"], env_kwargs=env_kwargs)`.
+Geometric settings, episode limits and physical parameters remain in
+`env_kwargs`. Failure detection remains active regardless of the objective,
+so include `FailurePenalty` when those events should reduce the reward.
 
-To customize only the auxiliary shaping instead, pass `geometry` as
-`train_config["reward"]` and leave `reward_composite` unset. The existing
-`shaping_reward_weight` then scales that whole group, while the environment
-retains the other objectives. Providing both options raises an error rather
-than silently counting components twice.
+`RewardMultiObjectif` implements the Composite pattern through the common
+`RewardComponent` interface. Children can be leaves or other composites.
+Existing `compute(model, data)` classes are automatically adapted. A standalone
+leaf also defines the complete objective and is used at weight 1.0.
 
-Use `set_weight(name, weight)` or `remove(name)` to edit a tree. When changing
-an environment already created, edit `env.reward_composite`. Custom composites
-are deep-copied for each environment, including when used as shaping. New
-stateful leaves can inherit `RewardComponent` and implement `reset(model, data)`.
-Legacy two-argument rewards remain supported as stateless leaves.
+```text
+total = sum(weight * reward_value) - sum(weight * abs(penalty_value))
+```
 
-The environment supplies an immutable `RewardContext` with the current
-`bounce_count`, `failed`, `energy_j` and `segment_distance_integral_m_s`. Thus
-energy, distance and event leaves reuse measurements from all executed physics
-substeps instead of estimating them from only the final state.
+`add_penalty` accepts positive costs and existing negative penalty scores
+without turning them into bonuses. There is no implicit normalization. Weights
+must be finite and nonnegative, names unique and nonempty, and cycles are
+rejected. Weight zero still evaluates diagnostics. Use `set_weight(name, weight)`
+and `remove(name)` to edit the tree before training, or edit `env.reward` for an
+existing environment. Every provided objective is copied per environment.
+Stateful leaves can inherit `RewardComponent` and implement `reset(model, data)`.
 
-`info["reward_components"]` exposes each child's raw `value`, `weight`, `kind`,
-signed `contribution` and `details`. Nested composites retain their own tree in
-`details`, avoiding collisions between child diagnostic keys. Existing flat
-channels such as `penalty_energy` follow the canonical top-level names. For
-arbitrary names or nested groups, use the component tree for the full breakdown.
+The immutable `RewardContext` supplies `bounce_count`, `failed`, `energy_j` and
+`segment_distance_integral_m_s`, including all executed physics substeps.
+`info["reward_components"]` exposes each child's raw value, weight, kind, signed
+contribution and details. Nested composites retain their own tree in `details`.
+Legacy flat diagnostic channels follow canonical top-level component names.
+Episode reports include cumulative contributions, and TensorBoard logs their
+mean episode sums under `eval/reward_components/<name>`.
 
-Episode reports store cumulative top-level contributions in
-`task_metrics["reward_components"]`. TensorBoard automatically records their
-mean episode sums under `eval/reward_components/<name>`, including custom names.
-These contributions sum to the mean episode reward.
+Migration: the old `reward_composite` option and separate reward weights in
+`env_kwargs` have been removed. Move all weights into the tree and pass it as
+`reward`. Existing two-argument reward classes still work, but their value is
+now the whole score. To keep an old auxiliary shaping function, explicitly add
+it to a composite with the desired weight alongside the other components.

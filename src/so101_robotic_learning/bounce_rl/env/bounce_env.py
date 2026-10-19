@@ -11,7 +11,7 @@ import mujoco.viewer
 from .bounce_events import BounceConfig, BounceTracker
 from ..rewards.reward_utils import distance_to_vertical_segment
 from ..rewards.reward_multi_objectif import (
-    RewardComponent, RewardContext, RewardMultiObjectif, make_bounce_reward,
+    RewardContext, RewardMultiObjectif, make_default_reward,
 )
 
 class BounceEnv(gym.Env):
@@ -21,6 +21,11 @@ class BounceEnv(gym.Env):
                       avec image courante + images passées demandées
       - obs["state"]: concaténation des états float32 ((K+1) * (nq+nv),)
                       avec état courant + états passés demandés
+
+    reward:
+      Objectif complet, copié pour chaque environnement. None crée le composite
+      de jonglage par défaut. Aucune pondération ou pénalité implicite n'est
+      ajoutée à un objectif fourni. Les poids se règlent dans le composite.
 
     latent_steps:
       tableau numpy d'entiers positifs.
@@ -68,19 +73,13 @@ class BounceEnv(gym.Env):
         render_mode: str | None = None,
         record_video: bool = False,
         bounce_config: BounceConfig | None = None,
-        bounce_reward_weight: float = 5.0,
-        shaping_reward_weight: float = 0.05,
-        fall_penalty: float = 5.0,
         video_camera_name: str | None = None,
         video_width: int | None = None,
         video_height: int | None = None,
         render_profile: str = "standard",
         video_render_profile: str = "standard",
-        energy_penalty_weight: float = 0.0,
-        ball_segment_penalty_weight: float = 0.0,
         ball_segment_start_height: float = 0.2,
         ball_segment_length: float = 1.0,
-        reward_composite: RewardMultiObjectif | None = None,
     ):
         super().__init__()
 
@@ -91,12 +90,9 @@ class BounceEnv(gym.Env):
             )
 
         self.xml_path = xml_path
-        self.reward = deepcopy(reward) if isinstance(reward, RewardComponent) else reward
-        if reward_composite is not None:
-            if not isinstance(reward_composite, RewardMultiObjectif):
-                raise TypeError("reward_composite must be a RewardMultiObjectif.")
-            if reward is not None:
-                raise ValueError("Use reward for auxiliary shaping or reward_composite for the full objective, not both.")
+        objective = make_default_reward() if reward is None else deepcopy(reward)
+        self.reward = (objective if isinstance(objective, RewardMultiObjectif)
+                       else RewardMultiObjectif().add_reward("custom", objective))
         self.max_episode_steps = int(max_episode_steps)
         self.render_mode = render_mode
         self.record_video = bool(record_video)
@@ -107,31 +103,14 @@ class BounceEnv(gym.Env):
         self._capture_episodes_remaining = None
         self._capture_this_episode = True
         self._last_observation_time = None
-        weights = (bounce_reward_weight, shaping_reward_weight, fall_penalty,
-                   energy_penalty_weight, ball_segment_penalty_weight)
-        if any(not np.isfinite(w) or w < 0 for w in weights):
-            raise ValueError("Task reward weights must be finite and nonnegative.")
-        self.bounce_reward_weight = float(bounce_reward_weight)
-        self.shaping_reward_weight = float(shaping_reward_weight)
-        self.fall_penalty = float(fall_penalty)
-        self.energy_penalty_weight = float(energy_penalty_weight)
         self._episode_mechanical_energy_j = 0.0
         if not np.isfinite(ball_segment_start_height) or ball_segment_start_height < 0:
             raise ValueError("ball_segment_start_height must be finite and nonnegative.")
         if not np.isfinite(ball_segment_length) or ball_segment_length <= 0:
             raise ValueError("ball_segment_length must be finite and positive.")
-        self.ball_segment_penalty_weight = float(ball_segment_penalty_weight)
         self.ball_segment_start_height = float(ball_segment_start_height)
         self.ball_segment_length = float(ball_segment_length)
         self._episode_segment_distance_integral_m_s = 0.0
-        self.reward_composite = (
-            deepcopy(reward_composite) if reward_composite is not None else
-            make_bounce_reward(
-                self.reward, bounce_weight=self.bounce_reward_weight,
-                shaping_weight=self.shaping_reward_weight, failure_weight=self.fall_penalty,
-                energy_weight=self.energy_penalty_weight, segment_weight=self.ball_segment_penalty_weight,
-            )
-        )
         self._episode_energy_penalty = 0.0
         self._episode_ball_segment_penalty = 0.0
         self._episode_reward_components = {}
@@ -432,7 +411,7 @@ class BounceEnv(gym.Env):
 
         mujoco.mj_forward(self.model, self.data)
         self.bounce_tracker.reset(self.data)
-        self.reward_composite.reset(self.model, self.data)
+        self.reward.reset(self.model, self.data)
 
         self.next_frame_time = self.data.time
         self._maybe_update_camera()
@@ -526,7 +505,7 @@ class BounceEnv(gym.Env):
             bounce_count=len(bounce_events), failed=terminated, energy_j=energy_step_j,
             segment_distance_integral_m_s=segment_distance_integral_m_s,
         )
-        reward, reward_info = self.reward_composite.compute(self.model, self.data, context)
+        reward, reward_info = self.reward.compute(self.model, self.data, context)
         components = reward_info["components"]
         for name, component in components.items():
             self._episode_reward_components[name] = (

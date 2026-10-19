@@ -158,12 +158,13 @@ class RewardMultiObjectif(RewardComponent):
         return total, {"reward_total": total, "components": details}
 
 
-def make_bounce_reward(shaping, *, bounce_weight, shaping_weight, failure_weight,
-                       energy_weight, segment_weight):
-    """Default objective tree, preserving the existing BounceEnv reward formula."""
+def make_default_reward():
+    """Create a fresh full juggling objective with the notebook defaults."""
+    from .reward_ball_aligned_on_z_and_above_paddle import BallAlignedOnZAndAbovePaddleReward
+
     return (RewardMultiObjectif()
-            .add_reward("bounces", BounceReward(), bounce_weight)
-            .add_reward("shaping", shaping if shaping is not None else ConstantReward(0), shaping_weight)
-            .add_penalty("failure", FailurePenalty(), failure_weight)
-            .add_penalty("energy", EnergyPenalty(), energy_weight)
-            .add_penalty("ball_segment", BallSegmentPenalty(), segment_weight))
+            .add_reward("bounces", BounceReward(), 5.0)
+            .add_reward("shaping", BallAlignedOnZAndAbovePaddleReward(), 0.05)
+            .add_penalty("failure", FailurePenalty(), 5.0)
+            .add_penalty("energy", EnergyPenalty(), 0.01)
+            .add_penalty("ball_segment", BallSegmentPenalty(), 1.0))

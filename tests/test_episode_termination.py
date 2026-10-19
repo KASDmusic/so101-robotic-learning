@@ -10,12 +10,14 @@ from so101_robotic_learning.bounce_rl.env.bounce_env import BounceEnv
 from so101_robotic_learning.bounce_rl.env.bounce_events import BounceConfig
 from so101_robotic_learning.bounce_rl.rl.rl_utils import summarize_task_metrics
 
+from reward_fixtures import task_reward
+
 FIXTURE = Path(__file__).parent / "assets/termination_fixture.xml"
 
 
 class EpisodeTerminationTests(unittest.TestCase):
     def make_env(self, **kwargs):
-        env = BounceEnv(str(FIXTURE), render_profile="train_fast", **kwargs)
+        env = BounceEnv(str(FIXTURE), reward=task_reward(), render_profile="train_fast", **kwargs)
         self.addCleanup(env.close)
         env.reset()
         return env

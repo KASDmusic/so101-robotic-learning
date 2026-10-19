@@ -14,6 +14,7 @@ from stable_baselines3.common.vec_env import DummyVecEnv, VecMonitor
 
 from so101_robotic_learning.bounce_rl.env.bounce_env import BounceEnv
 from so101_robotic_learning.bounce_rl.rewards.reward_ball_aligned_on_z_and_above_paddle import BallAlignedOnZAndAbovePaddleReward
+from so101_robotic_learning.bounce_rl.rewards import RewardMultiObjectif
 from so101_robotic_learning.bounce_rl.rl import train_ppo, train_sac
 from so101_robotic_learning.bounce_rl.rl.rl_utils import (
     EvalVideoSaveBestCallback, evaluate_policy_on_env, get_camera_fps, rollout_policy,
@@ -114,12 +115,17 @@ class PhysicsTests(unittest.TestCase):
         reward = BallAlignedOnZAndAbovePaddleReward()
         env = train_sac.make_env(XML, reward=reward)()
         try:
-            self.assertIs(env.unwrapped.reward, reward)
+            obs, _ = env.reset()
+            expected = reward.compute(env.unwrapped.model, env.unwrapped.data)[0]
+            self.assertEqual(env.unwrapped.reward.compute(env.unwrapped.model, env.unwrapped.data)[0], expected)
+            self.assertEqual([term.name for term in env.unwrapped.reward.components], ["custom"])
         finally:
             env.close()
         env = train_sac.make_env(XML)()
         try:
-            self.assertIsInstance(env.unwrapped.reward, BallAlignedOnZAndAbovePaddleReward)
+            self.assertIsInstance(env.unwrapped.reward, RewardMultiObjectif)
+            self.assertEqual([term.name for term in env.unwrapped.reward.components],
+                             ["bounces", "shaping", "failure", "energy", "ball_segment"])
         finally:
             env.close()
 

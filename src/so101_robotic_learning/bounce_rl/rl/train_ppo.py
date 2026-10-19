@@ -14,9 +14,6 @@ from .rl_utils import (
     log_camera_videos,
 )
 
-from so101_robotic_learning.bounce_rl.rewards.reward_ball_aligned_on_z_and_above_paddle import (
-    BallAlignedOnZAndAbovePaddleReward,
-)
 from so101_robotic_learning.bounce_rl.env.bounce_env import BounceEnv
 
 
@@ -28,15 +25,11 @@ def make_env(
     env_kwargs=None,
 ):
     def _init():
-        env_reward = reward
-        if env_reward is None and (env_kwargs or {}).get("reward_composite") is None:
-            env_reward = BallAlignedOnZAndAbovePaddleReward()
-
         env = BounceEnv(
             xml_path=str(xml_path),
             render_mode=render_mode,
             record_video=record_video,
-            reward=env_reward,
+            reward=reward,
             **{"render_profile": "train_fast", **(env_kwargs or {})},
         )
         env = Monitor(env)

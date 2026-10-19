@@ -10,10 +10,12 @@ import numpy as np
 from so101_robotic_learning.bounce_rl.env.bounce_env import BounceEnv
 from so101_robotic_learning.bounce_rl.rewards import (
     BallSegmentPenalty, BounceReward, ConstantReward, EnergyPenalty, FailurePenalty,
-    RewardComponent, RewardContext, RewardMultiObjectif,
+    RewardComponent, RewardContext, RewardMultiObjectif, make_default_reward,
 )
 from so101_robotic_learning.bounce_rl.rl import train_ppo, train_sac
 from so101_robotic_learning.bounce_rl.rl.rl_utils import summarize_task_metrics
+
+from reward_fixtures import task_reward
 
 FIXTURE = Path(__file__).parent / "assets/termination_fixture.xml"
 
@@ -126,9 +128,19 @@ class CompositeEnvironmentTests(unittest.TestCase):
         env.data.qpos[start:start + 3] = env.data.site_xpos[env.bounce_tracker.site] + offset
         mujoco.mj_forward(env.model, env.data)
 
-    def test_default_tree_preserves_formula_details_and_episode_contributions(self):
-        env = self.make_env(reward=legacy(2., marker="legacy details"),
-                            ball_segment_penalty_weight=3.)
+    def test_none_builds_full_default_objective_and_fresh_trees(self):
+        env = self.make_env()
+        self.assertEqual({term.name: term.weight for term in env.reward.components}, {
+            "bounces": 5., "shaping": .05, "failure": 5., "energy": .01, "ball_segment": 1.,
+        })
+        self.assertAlmostEqual(env.step(np.zeros(1))[1], .1)
+        first, second = make_default_reward(), make_default_reward()
+        first.set_weight("energy", 100.)
+        self.assertEqual({term.name: term.weight for term in second.components}["energy"], .01)
+
+    def test_explicit_composite_matches_chosen_formula_and_episode_contributions(self):
+        objective = task_reward(shaping=legacy(2., marker="legacy details"), segment=3.)
+        env = self.make_env(reward=objective)
         self.place_ball(env, np.array([.3, .4, .7]))
         _, reward, _, _, info = env.step(np.zeros(1))
         self.assertAlmostEqual(reward, .1 - 3. * .5 * .04)
@@ -141,18 +153,18 @@ class CompositeEnvironmentTests(unittest.TestCase):
         env.reset()
         self.assertEqual(env._task_metrics()["reward_components"], {})
 
-    def test_legacy_reward_argument_can_itself_be_a_nested_composite(self):
-        shaping = (RewardMultiObjectif().add_reward("positive", ConstantReward(10))
-                   .add_penalty("cost", ConstantReward(2)))
-        env = self.make_env(reward=shaping)
+    def test_nested_composite_is_the_complete_objective_without_outer_scaling(self):
+        objective = (RewardMultiObjectif().add_reward("positive", ConstantReward(10))
+                     .add_penalty("cost", ConstantReward(2)))
+        env = self.make_env(reward=objective)
         _, reward, _, _, info = env.step(np.zeros(1))
-        self.assertAlmostEqual(reward, .4)
-        self.assertEqual(info["reward_shaping"], 8.)
+        self.assertEqual(reward, 8.)
+        self.assertEqual(set(info["reward_components"]), {"positive", "cost"})
 
-    def test_full_objective_replaces_default_weights_but_keeps_failure_detection(self):
+    def test_custom_objective_keeps_failure_detection_without_adding_default_costs(self):
         objective = (RewardMultiObjectif().add_reward("constant", ConstantReward(7))
                      .add_penalty("failure", FailurePenalty(), 3.))
-        env = self.make_env(reward_composite=objective)
+        env = self.make_env(reward=objective)
         self.place_ball(env, np.array([2.01, 0., .7]))
         _, reward, terminated, _, info = env.step(np.zeros(1))
         self.assertTrue(terminated)
@@ -161,31 +173,42 @@ class CompositeEnvironmentTests(unittest.TestCase):
         self.assertEqual(info["penalty_failure"], -3.)
         self.assertEqual(set(info["reward_components"]), {"constant", "failure"})
 
-    def test_full_composites_are_isolated_between_vector_workers_and_factories(self):
+    def test_rewards_are_isolated_between_vector_workers_and_factories(self):
         leaf = StatefulReward()
         objective = RewardMultiObjectif().add_reward("stateful", leaf)
         for factory in (train_ppo.make_env, train_sac.make_env):
-            for full_objective in (True, False):
-                kwargs = ({"env_kwargs": {"reward_composite": objective}}
-                          if full_objective else {"reward": objective})
-                scale = 1. if full_objective else .05
-                first, second = factory(FIXTURE, **kwargs)(), factory(FIXTURE, **kwargs)()
-                try:
-                    first.reset()
-                    second.reset()
-                    first.reset()
-                    self.assertEqual(first.step(np.zeros(1))[1], 2. * scale)
-                    self.assertEqual(second.step(np.zeros(1))[1], scale)
-                    self.assertEqual(leaf.resets, 0)
-                finally:
-                    first.close()
-                    second.close()
+            first, second = factory(FIXTURE, reward=objective)(), factory(FIXTURE, reward=objective)()
+            try:
+                first.reset()
+                second.reset()
+                first.reset()
+                self.assertEqual(first.step(np.zeros(1))[1], 2.)
+                self.assertEqual(second.step(np.zeros(1))[1], 1.)
+                self.assertEqual(leaf.resets, 0)
+            finally:
+                first.close()
+                second.close()
 
-    def test_ambiguous_or_invalid_full_objective_is_rejected(self):
-        with self.assertRaises(ValueError):
-            BounceEnv(str(FIXTURE), reward=legacy(1), reward_composite=RewardMultiObjectif())
+    def test_two_argument_leaf_is_a_full_objective_not_auxiliary_shaping(self):
+        env = self.make_env(reward=legacy(2., marker="legacy details"))
+        self.place_ball(env, np.array([2.01, 0., .7]))
+        _, reward, terminated, _, info = env.step(np.zeros(1))
+        self.assertTrue(terminated)
+        self.assertEqual(reward, 2.)
+        self.assertEqual(set(info["reward_components"]), {"custom"})
+        self.assertEqual(info["reward_components"]["custom"]["details"]["marker"], "legacy details")
+
+    def test_single_context_leaf_is_supported_as_full_objective(self):
+        env = self.make_env(reward=ConstantReward(7.))
+        self.assertEqual(env.step(np.zeros(1))[1], 7.)
+
+    def test_removed_configuration_arguments_and_invalid_reward_are_rejected(self):
+        for name in ("reward_composite", "bounce_reward_weight", "shaping_reward_weight",
+                     "fall_penalty", "energy_penalty_weight", "ball_segment_penalty_weight"):
+            with self.subTest(name=name), self.assertRaises(TypeError):
+                BounceEnv(str(FIXTURE), **{name: 1.})
         with self.assertRaises(TypeError):
-            BounceEnv(str(FIXTURE), reward_composite=object())
+            BounceEnv(str(FIXTURE), reward=object())
 
 
 if __name__ == "__main__":

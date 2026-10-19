@@ -45,9 +45,7 @@ class TensorBoardLoggingTests(unittest.TestCase):
                 xml_path=XML, root=tmp, tensorboard_log=True,
                 env_kwargs={"max_episode_steps": 2, "frame_skip": 1,
                             "video_camera_name": "overview_cam",
-                            "video_width": 96, "video_height": 64,
-                            "energy_penalty_weight": 0.01,
-                            "ball_segment_penalty_weight": 1.0},
+                            "video_width": 96, "video_height": 64},
                 eval_every_episodes=1, n_eval_episodes=1, eval_max_steps=2,
                 save_eval_video=record_video, eval_render_mode=None,
                 print_spaces=False, verbose=0, callback_verbose=0,
@@ -126,9 +124,8 @@ class TensorBoardLoggingTests(unittest.TestCase):
         ):
             with self.subTest(algorithm=module.__name__), tempfile.TemporaryDirectory() as tmp:
                 module.train(
-                    xml_path=XML, root=tmp, total_timesteps=4,
-                    env_kwargs={"max_episode_steps": 2, "frame_skip": 1,
-                                "reward_composite": objective},
+                    xml_path=XML, root=tmp, total_timesteps=4, reward=objective,
+                    env_kwargs={"max_episode_steps": 2, "frame_skip": 1},
                     eval_every_episodes=1, n_eval_episodes=1, eval_max_steps=2,
                     save_eval_video=False, eval_render_mode=None,
                     print_spaces=False, verbose=0, callback_verbose=0, device="cpu", **kwargs,

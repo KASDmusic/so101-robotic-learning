@@ -19,6 +19,8 @@ from so101_robotic_learning.bounce_rl.rl.rl_utils import (
 )
 from test_priority_fixes import CameraEpisode, ZeroPolicy, XML
 
+from reward_fixtures import task_reward
+
 FIXTURE = Path(__file__).parent / "assets/bounce_fixture.xml"
 
 
@@ -142,7 +144,7 @@ class EventTests(unittest.TestCase):
 
 class ObjectiveIntegrationTests(unittest.TestCase):
     def test_substeps_accumulate_events_and_reward_uses_bounces(self):
-        env = BounceEnv(str(FIXTURE), frame_skip=500, bounce_config=BounceConfig(success_bounces=2))
+        env = BounceEnv(str(FIXTURE), reward=task_reward(), frame_skip=500, bounce_config=BounceConfig(success_bounces=2))
         try:
             env.reset()
             _, reward, _, _, info = env.step(np.zeros(0, dtype=np.float32))
@@ -157,7 +159,7 @@ class ObjectiveIntegrationTests(unittest.TestCase):
             env.close()
 
     def test_fall_stops_at_substep_and_reports_exact_time(self):
-        env = BounceEnv(str(FIXTURE), frame_skip=200, fall_penalty=5.)
+        env = BounceEnv(str(FIXTURE), reward=task_reward(), frame_skip=200)
         try:
             env.reset()
             env.data.qpos[:3] = [.5, 0., .11]  # miss the paddle

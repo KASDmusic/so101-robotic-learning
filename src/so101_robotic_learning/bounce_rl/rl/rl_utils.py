@@ -294,6 +294,10 @@ def summarize_task_metrics(episodes):
         "mean_duration_s": mean("elapsed_sim_time_s"),
         "mean_time_to_fall_s": mean("time_to_fall_s"),
         "fall_rate": mean("fell"),
+        "paddle_ground_contact_rate": mean("paddle_ground_contact"),
+        "ball_too_far_rate": mean("ball_too_far"),
+        "mean_mechanical_energy_j": mean("mechanical_energy_j"),
+        "mean_energy_penalty": mean("energy_penalty"),
         "mean_contact_dispersion_m": mean("contact_dispersion_m"),
     }
 

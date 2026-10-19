@@ -71,6 +71,7 @@ class BounceEnv(gym.Env):
         video_height: int | None = None,
         render_profile: str = "standard",
         video_render_profile: str = "standard",
+        energy_penalty_weight: float = 0.0,
     ):
         super().__init__()
 
@@ -92,12 +93,14 @@ class BounceEnv(gym.Env):
         self._capture_episodes_remaining = None
         self._capture_this_episode = True
         self._last_observation_time = None
-        weights = (bounce_reward_weight, shaping_reward_weight, fall_penalty)
+        weights = (bounce_reward_weight, shaping_reward_weight, fall_penalty, energy_penalty_weight)
         if any(not np.isfinite(w) or w < 0 for w in weights):
             raise ValueError("Task reward weights must be finite and nonnegative.")
         self.bounce_reward_weight = float(bounce_reward_weight)
         self.shaping_reward_weight = float(shaping_reward_weight)
         self.fall_penalty = float(fall_penalty)
+        self.energy_penalty_weight = float(energy_penalty_weight)
+        self._episode_mechanical_energy_j = 0.0
         self.camera_name = camera_name
         self.video_camera_name = video_camera_name or camera_name
         self.video_width = int(video_width) if video_width is not None else width
@@ -321,6 +324,14 @@ class BounceEnv(gym.Env):
     def _get_state(self) -> np.ndarray:
         return np.concatenate([self.data.qpos, self.data.qvel]).astype(np.float32)
 
+    def _task_metrics(self):
+        metrics = self.bounce_tracker.metrics(self.data)
+        metrics.update({
+            "mechanical_energy_j": self._episode_mechanical_energy_j,
+            "energy_penalty": -self.energy_penalty_weight * self._episode_mechanical_energy_j,
+        })
+        return metrics
+
     def _get_past_state(self, lag: int) -> np.ndarray:
         # lag=1 => step précédent, donc élément [-1]
         # lag=2 => élément [-2], etc.
@@ -358,6 +369,7 @@ class BounceEnv(gym.Env):
         self.next_frame_time = 0.0
         self.step_count = 0
         self._rendered_frames = []
+        self._episode_mechanical_energy_j = 0.0
         self._observation_frames = []
         self._last_observation_time = None
         self._capture_this_episode = (
@@ -396,7 +408,7 @@ class BounceEnv(gym.Env):
         if self.render_mode == "human":
             self._sync_human_viewer()
 
-        return obs, {"task_metrics": self.bounce_tracker.metrics(self.data)}
+        return obs, {"task_metrics": self._task_metrics()}
 
     def step(self, action):
         self.step_count += 1
@@ -411,18 +423,25 @@ class BounceEnv(gym.Env):
         self.data.ctrl[:] = np.asarray(actions_rescaled, dtype=np.float32)
 
         bounce_events = []
+        energy_step_j = 0.0
         for _ in range(self.frame_skip):
             before = self.bounce_tracker.sample(self.data)
             mujoco.mj_step(self.model, self.data)
             # Synchronize positions, contacts and velocities after integration.
             mujoco.mj_forward(self.model, self.data)
+            # Absolute mechanical work, including braking. Sum per actuator
+            # before integrating so opposite motor powers cannot cancel out.
+            power_w = float(np.sum(np.abs(self.data.actuator_force * self.data.actuator_velocity)))
+            energy_step_j += power_w * self.model.opt.timestep
             event = self.bounce_tracker.update(before, self.bounce_tracker.sample(self.data))
             if event is not None:
                 bounce_events.append(event)
             if self.render_profile != "train_fast":
                 self._maybe_update_camera()
-            if self.bounce_tracker.time_to_fall is not None:
+            if self.bounce_tracker.termination_reason is not None:
                 break
+
+        self._episode_mechanical_energy_j += energy_step_j
 
         if self.render_profile == "train_fast":
             self._maybe_update_camera()
@@ -448,7 +467,7 @@ class BounceEnv(gym.Env):
             shaping_reward = 0.0
             reward_info = {}
 
-        terminated = self.bounce_tracker.time_to_fall is not None
+        terminated = self.bounce_tracker.termination_reason is not None
         truncated = False
 
         if self.step_count >= self.max_episode_steps:
@@ -458,14 +477,19 @@ class BounceEnv(gym.Env):
         info = dict(reward_info)
         event_reward = self.bounce_reward_weight * len(bounce_events)
         penalty = self.fall_penalty if terminated else 0.0
-        reward = event_reward + self.shaping_reward_weight * shaping_reward - penalty
+        energy_penalty = self.energy_penalty_weight * energy_step_j
+        reward = event_reward + self.shaping_reward_weight * shaping_reward - penalty - energy_penalty
         info.update({
             "reward_shaping": float(shaping_reward),
             "reward_bounces": event_reward,
-            "penalty_fall": -penalty,
+            "penalty_fall": -self.fall_penalty if self.bounce_tracker.time_to_fall is not None else 0.0,
+            "penalty_failure": -penalty,
+            "energy_step_j": energy_step_j,
+            "penalty_energy": -energy_penalty,
+            "termination_reason": self.bounce_tracker.termination_reason,
             "reward_total": float(reward),
             "bounce_events": bounce_events,
-            "task_metrics": self.bounce_tracker.metrics(self.data),
+            "task_metrics": self._task_metrics(),
         })
         # VecEnv resets immediately on done; preserve frames before reset clears them.
         if (terminated or truncated) and self._capture_this_episode and (self.record_video or self.render_mode == "rgb_array_list"):

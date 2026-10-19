@@ -44,7 +44,8 @@ class TensorBoardLoggingTests(unittest.TestCase):
                 xml_path=XML, root=tmp, tensorboard_log=True,
                 env_kwargs={"max_episode_steps": 2, "frame_skip": 1,
                             "video_camera_name": "overview_cam",
-                            "video_width": 96, "video_height": 64},
+                            "video_width": 96, "video_height": 64,
+                            "energy_penalty_weight": 0.01},
                 eval_every_episodes=1, n_eval_episodes=1, eval_max_steps=2,
                 save_eval_video=record_video, eval_render_mode=None,
                 print_spaces=False, verbose=0, callback_verbose=0,
@@ -59,7 +60,9 @@ class TensorBoardLoggingTests(unittest.TestCase):
             )]
             self.assertEqual(len(reports), len(expected_steps))
             for metric in ("success_rate", "mean_valid_bounces", "mean_max_consecutive_bounces",
-                           "mean_duration_s", "fall_rate", "mean_reward", "std_reward"):
+                           "mean_duration_s", "fall_rate", "paddle_ground_contact_rate",
+                           "ball_too_far_rate", "mean_mechanical_energy_j",
+                           "mean_energy_penalty", "mean_reward", "std_reward"):
                 tag = f"eval/{metric}"
                 self.assertIn(tag, scalars)
                 self.assertEqual([event.step for event in scalars[tag]], expected_steps)

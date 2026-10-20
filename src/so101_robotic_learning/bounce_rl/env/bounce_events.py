@@ -12,7 +12,7 @@ class BounceConfig:
     paddle_site: str = "paddle_face"
     min_incoming_speed: float = 0.05  # m/s relative to the paddle
     min_outgoing_speed: float = 0.05
-    min_flight_time: float = 0.02  # seconds without contact, filters chatter
+    min_flight_time: float = 0.2  # seconds without contact, filters chatter
     min_face_alignment: float = 0.7  # contact normal vs chosen face normal
     min_up_alignment: float = 0.5  # face normal vs world up
     fall_height: float = 0.1

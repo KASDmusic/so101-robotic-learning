@@ -8,6 +8,7 @@ from PIL import Image, ImageDraw
 from stable_baselines3.common.callbacks import BaseCallback
 from stable_baselines3.common.logger import TensorBoardOutputFormat
 from tensorboard.compat.proto.summary_pb2 import Summary
+from ..env.gravity_curriculum import save_gravity_curriculum
 
 def ensure_dir(path) -> Path:
     path = Path(path)
@@ -308,6 +309,10 @@ def summarize_task_metrics(episodes):
         summary[f"reward_components/{name}"] = float(np.mean([
             episode.get("reward_components", {}).get(name, 0.0) for episode in measured
         ]))
+    if any("gravity_m_s2" in episode for episode in measured):
+        summary.update({"mean_gravity_m_s2": mean("gravity_m_s2"),
+                        "mean_curriculum_level": mean("curriculum_level"),
+                        "curriculum_complete_rate": mean("curriculum_complete")})
     return summary
 
 
@@ -347,6 +352,7 @@ class EvalVideoSaveBestCallback(BaseCallback):
         evaluation_hook=None,
         eval_seed=None,
         evaluate_at_end=False,
+        gravity_curriculum=None,
     ):
         super().__init__(verbose)
         self.eval_env = eval_env
@@ -369,6 +375,8 @@ class EvalVideoSaveBestCallback(BaseCallback):
         self.eval_seed = eval_seed
         self.evaluate_at_end = evaluate_at_end
         self.last_result = None
+        self.gravity_curriculum = gravity_curriculum
+        self._last_curriculum_log = None
 
         self.episode_count = 0
         self.best_mean_reward = -np.inf
@@ -387,6 +395,20 @@ class EvalVideoSaveBestCallback(BaseCallback):
             self._evaluate_record_and_save(final=True)
 
     def _on_step(self) -> bool:
+        if self.gravity_curriculum is not None:
+            self.logger.record("curriculum/next_gravity_m_s2", self.gravity_curriculum.gravity)
+            self.logger.record("curriculum/level", self.gravity_curriculum.level)
+            self.logger.record("curriculum/complete", int(self.gravity_curriculum.state()["complete"]))
+            gravities = [info["task_metrics"]["gravity_m_s2"]
+                         for info in self.locals.get("infos", ())
+                         if "gravity_m_s2" in info.get("task_metrics", {})]
+            if gravities:
+                self.logger.record("curriculum/train_gravity_m_s2", float(np.mean(gravities)))
+            state = (self.gravity_curriculum.level, tuple(gravities))
+            if state != self._last_curriculum_log:
+                # Preserve every stage even if several pass between evaluations.
+                self.logger.dump(self.num_timesteps)
+                self._last_curriculum_log = state
         dones = self.locals.get("dones")
         n_done = int(np.sum(dones)) if dones is not None else 0
         if n_done > 0:
@@ -453,6 +475,10 @@ class EvalVideoSaveBestCallback(BaseCallback):
         # record() only buffers values. Flush each evaluation before another one
         # overwrites it, independently of PPO/SAC's training log interval.
         self.logger.dump(self.num_timesteps)
+        score = evaluation_score(eval_result)
+        if self.gravity_curriculum is not None:
+            # A higher-gravity stage supersedes checkpoints from easier stages.
+            score = (self.gravity_curriculum.level, *score)
         report = {
             "training_episodes": self.episode_count,
             "training_timesteps": self.num_timesteps,
@@ -461,8 +487,10 @@ class EvalVideoSaveBestCallback(BaseCallback):
             "rewards": rewards,
             "task_metrics": metrics,
             "episodes": eval_result["episode_metrics"],
-            "selection_score": list(evaluation_score(eval_result)),
+            "selection_score": list(score),
         }
+        if self.gravity_curriculum is not None:
+            report["curriculum"] = self.gravity_curriculum.state()
         if self.eval_every_timesteps is not None or final:
             suffix = "final" if final else "eval"
             report_name = f"{self.best_model_path.stem}_{suffix}_step_{self.num_timesteps:09d}.json"
@@ -482,12 +510,12 @@ class EvalVideoSaveBestCallback(BaseCallback):
             if metrics:
                 print(f"[Task] {metrics}")
 
-        score = evaluation_score(eval_result)
         if self.best_task_score is None or score > self.best_task_score:
             old_best = self.best_mean_reward
             self.best_task_score = score
             self.best_mean_reward = mean_reward
             self.model.save(str(self.best_model_path))
+            save_gravity_curriculum(self.gravity_curriculum, self.best_model_path)
             if self.save_replay_buffer:
                 from .checkpoints import replay_buffer_path
                 self.model.save_replay_buffer(replay_buffer_path(self.best_model_path))

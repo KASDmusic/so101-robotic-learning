@@ -13,6 +13,7 @@
   - **Energy penalty**: integrate absolute actuator mechanical work at every physics substep. Configurable weight, enabled at `0.01` in PPO/SAC notebooks, with episode totals and penalties logged in TensorBoard.
   - **Ball alignment penalty**: penalize distance to the nearest point on a vertical segment from 0.2 m to 1.2 m above `paddle_face`. Integrate over simulated time and expose configuration and metrics in PPO/SAC notebooks and TensorBoard.
   - **Composite rewards**: `RewardMultiObjectif` combines named weighted rewards, penalties and nested composites. Existing rewards remain compatible. Per-component contributions are available in episode reports and TensorBoard.
+  - **Gravity curriculum**: optional PPO/SAC progression from 3 to 9.81 m/s², advancing after 5 consecutive training bounces. Stages apply at reset, are shared across workers and persist beside checkpoints. Evaluation is read-only.
   - **Hyperparameter search**: optional Optuna grid, TPE and Gaussian-process searches for PPO/SAC, with a dedicated notebook, resumable SQLite studies and JSON/CSV exports. Existing training notebooks are preserved.
   - **Resume training**: PPO/SAC accept `resume_from`. Continue timestep counters in a new TensorBoard run. SAC saves and restores replay buffers beside best and last checkpoints.
   - **Unified reward API**: `reward` defines the full objective everywhere. Weights live in the composite, and geometric settings stay in `env_kwargs`. PPO/SAC notebooks and policy tests share the same configured reward.
@@ -23,7 +24,7 @@
   - **Cameras**: external view reserved for visualization, gripper view retained for the agent, and synchronized GIFs of both views with a single slider. MP4 exports removed, including during tests.
   - **Updated notebooks**: current configurations, robust paths, dated runs, and old outputs cleared.
   - **Faster rendering**: `train_fast` profile, one frame per decision, and external camera limited to the recorded episode. Physics unchanged. Local speedup of approximately **6×**, excluding neural network training.
-  - **Validation**: **90 tests pass**, covering grid/TPE/GP searches, study resumption and pruning, checkpoint resumption, replay buffers, composite objectives, penalties, episode termination, notebooks and TensorBoard files.
+  - **Validation**: **96 tests pass**, covering gravity curriculum stages and resumption, grid/TPE/GP searches, study resumption and pruning, checkpoint resumption, replay buffers, composite objectives, penalties, episode termination, notebooks and TensorBoard files.
 <!---
 
 ## Arborescence
@@ -123,6 +124,49 @@ le nombre de nouveaux pas de collecte avant les mises à jour.
 Pour un buffer vide, utiliser une copie du `.zip` sans buffer voisin.
 Les récompenses stockées ne sont pas recalculées si l’objectif change.
 `save_replay_buffer=False` désactive ces sauvegardes, potentiellement volumineuses.
+
+## Curriculum de gravité
+
+Disponible dans PPO et SAC, sans modifier les observations, la reward ou les conditions de rebond.
+Il est désactivé par défaut (`gravity_curriculum=None`). Pour l’activer dans les notebooks :
+
+```python
+from so101_robotic_learning.bounce_rl.env.gravity_curriculum import GravityCurriculumConfig
+
+train_config["gravity_curriculum"] = GravityCurriculumConfig(
+    start_gravity=3.0,
+    gravity_step=1.0,
+    target_gravity=9.81,
+    success_bounces=5,
+)
+```
+
+Les valeurs sont des intensités positives en m/s². La gravité globale de MuJoCo est
+`(0, 0, -g)`, pour la balle comme pour le robot.
+La progression par défaut est `3 → 4 → 5 → 6 → 7 → 8 → 9 → 9.81`.
+Un environnement d’entraînement doit atteindre 5 rebonds consécutifs validés au palier courant
+pour programmer le suivant. Les contacts bruts ou le total de rebonds non consécutifs ne suffisent pas.
+Un épisode ne fait progresser qu’un palier, même s’il dépasse ensuite 10 ou 15 rebonds.
+La gravité reste constante pendant l’épisode et change au prochain reset, sans provoquer
+un reset supplémentaire à la réussite. La progression s’arrête à la gravité cible.
+
+Les workers `DummyVecEnv` partagent la progression. Les succès d’épisodes encore en cours à un
+ancien palier ne peuvent pas sauter de paliers. Chaque worker rejoint le palier courant à son reset.
+Les évaluations et tests de politique utilisent le palier sauvegardé ou courant sans le faire avancer.
+Les meilleurs checkpoints sont sélectionnés d’abord par palier, puis selon les métriques de jonglage.
+Cela permet à un modèle évalué à une gravité plus élevée de remplacer un checkpoint de niveau facile.
+
+Les fichiers `*_best_curriculum.json` et `*_last_curriculum.json` conservent la configuration et
+le prochain palier à appliquer. Les garder avec les `.zip` pour que `resume_from` restaure le
+curriculum automatiquement, même si le nouvel appel laisse `gravity_curriculum=None`.
+Une configuration explicite différente est refusée. Un ancien modèle sans ce fichier peut démarrer
+un nouveau curriculum en fournissant `GravityCurriculumConfig(...)`.
+
+TensorBoard enregistre `curriculum/train_gravity_m_s2` (gravité réellement utilisée),
+`curriculum/next_gravity_m_s2` (palier programmé), `curriculum/level`, `curriculum/complete`
+et `eval/mean_gravity_m_s2`. Les rapports contiennent aussi le palier et la gravité des épisodes.
+Le buffer SAC est conservé entre les paliers. La recherche d’hyperparamètres demande une gravité
+fixe, donc `gravity_curriculum=None`, pour comparer les configurations sur une tâche identique.
 
 ## Recherche d’hyperparamètres (optionnelle)
 
@@ -248,7 +292,7 @@ python [script_name].py
     - [x] Penalize absolute actuator mechanical work, including braking.
 - [x] **Start training from a pretrained model**
 - [x] **Run a hyperparameter optimization.** (gridsearch, bayesian optimisation)
-- [ ] **Curriculum learning**
+- [x] **Curriculum learning** (gravity)
 - [ ] **Add variations to environment initialization.**
   - [ ] Implement a seeding system.
   - [ ] Vary the ball’s position and velocity vector (its trajectory must head toward the paddle).

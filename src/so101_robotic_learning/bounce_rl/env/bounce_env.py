@@ -9,6 +9,7 @@ import mujoco
 import mujoco.viewer
 
 from .bounce_events import BounceConfig, BounceTracker
+from .gravity_curriculum import GravityCurriculum, GravityCurriculumConfig
 from ..rewards.reward_utils import distance_to_vertical_segment
 from ..rewards.reward_multi_objectif import (
     RewardContext, RewardMultiObjectif, make_default_reward,
@@ -80,8 +81,18 @@ class BounceEnv(gym.Env):
         video_render_profile: str = "standard",
         ball_segment_start_height: float = 0.2,
         ball_segment_length: float = 1.0,
+        gravity_curriculum: GravityCurriculum | GravityCurriculumConfig | None = None,
+        curriculum_training: bool = True,
     ):
         super().__init__()
+        if isinstance(gravity_curriculum, GravityCurriculumConfig):
+            gravity_curriculum = GravityCurriculum(gravity_curriculum)
+        if gravity_curriculum is not None and not isinstance(gravity_curriculum, GravityCurriculum):
+            raise TypeError("gravity_curriculum must be GravityCurriculumConfig or GravityCurriculum.")
+        self.gravity_curriculum = gravity_curriculum
+        self.curriculum_training = bool(curriculum_training)
+        self._curriculum_level = 0
+        self._curriculum_promoted = False
 
         if render_mode is not None and render_mode not in self.metadata["render_modes"]:
             raise ValueError(
@@ -157,6 +168,7 @@ class BounceEnv(gym.Env):
         self.model = mujoco.MjModel.from_xml_path(xml_path)
         self._standard_offsamples = int(self.model.vis.quality.offsamples)
         self.model.opt.timestep = mujoco_step_periode
+        self._apply_gravity_curriculum()
         self.data = mujoco.MjData(self.model)
         self.bounce_tracker = BounceTracker(self.model, bounce_config)
 
@@ -350,7 +362,19 @@ class BounceEnv(gym.Env):
             "ball_segment_penalty": self._episode_ball_segment_penalty,
             "reward_components": dict(self._episode_reward_components),
         })
+        if self.gravity_curriculum is not None:
+            metrics.update({
+                "gravity_m_s2": float(-self.model.opt.gravity[2]),
+                "curriculum_level": self._curriculum_level,
+                "curriculum_complete": self._curriculum_level == self.gravity_curriculum.final_level,
+            })
         return metrics
+
+    def _apply_gravity_curriculum(self):
+        if self.gravity_curriculum is not None:
+            self._curriculum_level = self.gravity_curriculum.level
+            self.model.opt.gravity[:] = (0.0, 0.0, -self.gravity_curriculum.gravity)
+        self._curriculum_promoted = False
 
     def _get_past_state(self, lag: int) -> np.ndarray:
         # lag=1 => step précédent, donc élément [-1]
@@ -386,6 +410,7 @@ class BounceEnv(gym.Env):
     # -------------------------
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
+        self._apply_gravity_curriculum()
         self.next_frame_time = 0.0
         self.step_count = 0
         self._rendered_frames = []
@@ -468,6 +493,11 @@ class BounceEnv(gym.Env):
             event = self.bounce_tracker.update(before, self.bounce_tracker.sample(self.data))
             if event is not None:
                 bounce_events.append(event)
+                if (self.gravity_curriculum is not None and self.curriculum_training
+                        and not self._curriculum_promoted
+                        and self.bounce_tracker.consecutive >= self.gravity_curriculum.config.success_bounces):
+                    self.gravity_curriculum.advance(self._curriculum_level)
+                    self._curriculum_promoted = True
             if self.render_profile != "train_fast":
                 self._maybe_update_camera()
             if self.bounce_tracker.termination_reason is not None:

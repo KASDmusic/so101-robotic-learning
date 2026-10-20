@@ -16,6 +16,7 @@ except ImportError:
     optuna = None
 
 from so101_robotic_learning.bounce_rl.rl import train_ppo, train_sac
+from so101_robotic_learning.bounce_rl.env.gravity_curriculum import GravityCurriculumConfig
 from so101_robotic_learning.bounce_rl.rl.hyperparameter_search import optimize
 
 
@@ -160,6 +161,7 @@ class HyperparameterSearchTests(unittest.TestCase):
                 {"search_space": {"n_steps": {"type": "int", "low": 2, "high": 4}}},
                 {"study_name": "../outside"},
                 {"base_config": {**config, "resume_from": "checkpoint.zip"}},
+                {"base_config": {**config, "gravity_curriculum": GravityCurriculumConfig()}},
             ):
                 with self.subTest(extra=extra), self.assertRaises(ValueError):
                     optimize("ppo", **{"base_config": config, **extra})

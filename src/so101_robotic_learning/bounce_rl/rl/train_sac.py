@@ -10,6 +10,7 @@ from stable_baselines3.common.vec_env import DummyVecEnv
 from stable_baselines3.common.utils import check_for_correct_spaces
 
 
+from ..env.gravity_curriculum import make_gravity_curriculum, save_gravity_curriculum
 from .checkpoints import checkpoint_path, load_training_model, replay_buffer_path
 from .rl_utils import (
     EvalVideoSaveBestCallback,
@@ -28,6 +29,8 @@ def make_env(
     reward=None,
     record_video=False,
     env_kwargs=None,
+    gravity_curriculum=None,
+    curriculum_training=True,
 ):
     def _init():
         env = BounceEnv(
@@ -35,6 +38,8 @@ def make_env(
             render_mode=render_mode,
             record_video=record_video,
             reward=reward,
+            gravity_curriculum=gravity_curriculum,
+            curriculum_training=curriculum_training,
             **{"render_profile": "train_fast", **(env_kwargs or {})},
         )
         env = Monitor(env)
@@ -79,6 +84,7 @@ def train(
     total_timesteps=20_000,
     resume_from=None,
     seed=None,
+    gravity_curriculum=None,
     replay_buffer_from=None,
     save_replay_buffer=True,
     eval_every_episodes=10,
@@ -105,6 +111,9 @@ def train(
     Optional timestep-based evaluations override the episode schedule.
     evaluate_at_end evaluates the final updated policy and returns its metrics.
     seed controls fresh training and uses seed + 10_000 for evaluation.
+    gravity_curriculum opts into staged gravity, shared across training workers.
+    Evaluation never advances it. Stages apply at reset and resume from the
+    *_curriculum.json file saved beside best/last checkpoints.
     """
     root = Path(root)
     resume_path = checkpoint_path(root, resume_from) if resume_from is not None else None
@@ -120,12 +129,15 @@ def train(
         if candidate.is_file():
             buffer_path = candidate
 
+    curriculum = make_gravity_curriculum(gravity_curriculum, resume_path)
+
     train_env = DummyVecEnv([
         make_env(
             xml_path=xml_path,
             render_mode=train_render_mode,
             env_kwargs=env_kwargs,
             reward=reward,
+            gravity_curriculum=curriculum,
         )
         for _ in range(nb_vec_env_train)
     ])
@@ -135,7 +147,9 @@ def train(
             render_mode=eval_render_mode,
             env_kwargs=env_kwargs,
             reward=reward,
+            gravity_curriculum=curriculum,
             record_video=save_eval_video,
+            curriculum_training=False,
         )
         for _ in range(nb_vec_env_test)
     ])
@@ -212,6 +226,7 @@ def train(
             evaluation_hook=evaluation_hook,
             evaluate_at_end=evaluate_at_end,
             eval_seed=None if seed is None else seed + 10_000,
+            gravity_curriculum=curriculum,
             save_replay_buffer=save_replay_buffer,
         )
 
@@ -223,6 +238,7 @@ def train(
 
         model_path = model_dir / last_model_name
         model.save(str(model_path))
+        save_gravity_curriculum(curriculum, model_path)
         if save_replay_buffer:
             model.save_replay_buffer(replay_buffer_path(model_path))
         print(f"Modèle final sauvegardé dans : {model_path}.zip")
@@ -261,10 +277,13 @@ def test(
         else root / "models" / "sac_bounce_last.zip"
     )
 
+    curriculum = make_gravity_curriculum(resume_path=model_path)
     env = make_env(
         xml_path=xml_path,
         render_mode=render_mode,
         reward=reward,
+        gravity_curriculum=curriculum,
+        curriculum_training=False,
         record_video=save_test_video,
         env_kwargs=env_kwargs,
     )()

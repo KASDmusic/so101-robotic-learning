@@ -189,6 +189,9 @@ def optimize(
         raise ValueError("Hyperparameter trials must start fresh. Remove resume_from/replay_buffer_from.")
     if config.get("evaluation_hook") is not None:
         raise ValueError("The search manages evaluation_hook.")
+    if config.get("gravity_curriculum") is not None:
+        raise ValueError("Hyperparameter comparisons require fixed gravity. Set gravity_curriculum=None.")
+    config.pop("gravity_curriculum", None)
     unknown = set(config) - set(inspect.signature(module.train).parameters)
     if unknown:
         raise ValueError(f"Unknown training configuration keys: {sorted(unknown)}")

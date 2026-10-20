@@ -145,13 +145,14 @@ python [script_name].py
     - [x] End the episode if the paddle touches the ground or the ball moves more than 2 m from the paddle.
     - [x] Penalize absolute actuator mechanical work, including braking.
 - [ ] **Start training from a pretrained model**
+- [ ] **Run a hyperparameter optimization.** (gridsearch, bayesian optimisation)
+- [ ] **Curriculum learning**
 - [ ] **Add variations to environment initialization.**
   - [ ] Implement a seeding system.
   - [ ] Vary the ball’s position and velocity vector (its trajectory must head toward the paddle).
   - [ ] Vary the ball’s mass and other properties.
   - [ ] Vary the robot/paddle position.
   - [ ] Vary the lighting.
-- [ ] **Run a hyperparameter grid search.**
 - [ ] **When it is working, remove information unrelated to the arm (e.g., ball information).**
 - [ ] **Add support for `SubprocVecEnv` ?**
 - [ ] **Optimize environment execution?** (Test whether removing the paddle’s collision mesh and/or the arm’s mesh has a significant impact, reducing frame rendering and explore other optimizations, such as JAX.)

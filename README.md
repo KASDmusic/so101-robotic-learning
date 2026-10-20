@@ -13,6 +13,7 @@
   - **Energy penalty**: integrate absolute actuator mechanical work at every physics substep. Configurable weight, enabled at `0.01` in PPO/SAC notebooks, with episode totals and penalties logged in TensorBoard.
   - **Ball alignment penalty**: penalize distance to the nearest point on a vertical segment from 0.2 m to 1.2 m above `paddle_face`. Integrate over simulated time and expose configuration and metrics in PPO/SAC notebooks and TensorBoard.
   - **Composite rewards**: `RewardMultiObjectif` combines named weighted rewards, penalties and nested composites. Existing rewards remain compatible. Per-component contributions are available in episode reports and TensorBoard.
+  - **Resume training**: PPO/SAC accept `resume_from`. Continue timestep counters in a new TensorBoard run. SAC saves and restores replay buffers beside best and last checkpoints.
   - **Unified reward API**: `reward` defines the full objective everywhere. Weights live in the composite, and geometric settings stay in `env_kwargs`. PPO/SAC notebooks and policy tests share the same configured reward.
   - **Corrected rewards**: computation without modifying the physics, local `paddle_face` frame, active face only, and a shared default reward for PPO/SAC.
   - **Metrics and checkpoints**: tracking of streaks, success, drops, and impact dispersion. Best-model selection based on juggling performance, with JSON reports.
@@ -21,7 +22,7 @@
   - **Cameras**: external view reserved for visualization, gripper view retained for the agent, and synchronized GIFs of both views with a single slider. MP4 exports removed, including during tests.
   - **Updated notebooks**: current configurations, robust paths, dated runs, and old outputs cleared.
   - **Faster rendering**: `train_fast` profile, one frame per decision, and external camera limited to the recorded episode. Physics unchanged. Local speedup of approximately **6×**, excluding neural network training.
-  - **Validation**: **78 tests pass**, covering the unified reward API, composite objectives, penalties, episode termination, notebooks and TensorBoard files.
+  - **Validation**: **83 tests validated**, covering checkpoint resumption, replay buffers, the unified reward API, composite objectives, penalties, episode termination, notebooks and TensorBoard files.
 <!---
 
 ## Arborescence
@@ -90,6 +91,38 @@ conda env create -f environment.yml
 conda activate so101-robotic-learning
 ```
 
+## Reprendre un entraînement PPO ou SAC
+
+Dans le notebook, conserver le nouveau dossier daté et renseigner le checkpoint :
+
+```python
+train_config["resume_from"] = root / "models/ancien_run/sac_bounce_last.zip"
+train_config["total_timesteps"] = 100_000  # pas supplémentaires
+train_sac.train(**train_config)
+```
+
+Pour PPO, utiliser un checkpoint `ppo_bounce_last.zip` ou `ppo_bounce_best.zip`
+et appeler `train_ppo.train`. Les chemins relatifs sont résolus depuis `root`.
+L’architecture, l’optimiseur et les hyperparamètres sont restaurés depuis le modèle.
+Les paramètres correspondants du nouvel appel sont ignorés lors de la reprise.
+L’environnement, la reward, le device et l’évaluation utilisent la nouvelle configuration.
+Les observations et actions doivent rester compatibles. La simulation redémarre au reset,
+sans restaurer une trajectoire physique ou un rollout PPO partiel.
+
+Un nouveau run TensorBoard utilise les pas cumulés. Le budget est supplémentaire,
+avec un arrondi possible au rollout PPO ou à la fréquence de collecte SAC.
+Les compteurs d’épisodes et le classement du meilleur modèle repartent pour cette session.
+Utiliser un nouveau `model_dir_name` pour conserver les checkpoints précédents.
+
+SAC enregistre par défaut `*_best_replay_buffer.pkl` et `*_last_replay_buffer.pkl`.
+Le buffer voisin du checkpoint est chargé automatiquement. `replay_buffer_from` permet
+de choisir un autre fichier. Le nombre d’environnements doit correspondre et la capacité
+vient du buffer chargé. Sans buffer, les poids sont conservés et `learning_starts` fixe
+le nombre de nouveaux pas de collecte avant les mises à jour.
+Pour un buffer vide, utiliser une copie du `.zip` sans buffer voisin.
+Les récompenses stockées ne sont pas recalculées si l’objectif change.
+`save_replay_buffer=False` désactive ces sauvegardes, potentiellement volumineuses.
+
 ## Environnements
 
 ### bounce_rl
@@ -144,7 +177,7 @@ python [script_name].py
     - [x] Penalize ball distance to a vertical 1 m segment starting 20 cm above the paddle centre.
     - [x] End the episode if the paddle touches the ground or the ball moves more than 2 m from the paddle.
     - [x] Penalize absolute actuator mechanical work, including braking.
-- [ ] **Start training from a pretrained model**
+- [x] **Start training from a pretrained model**
 - [ ] **Run a hyperparameter optimization.** (gridsearch, bayesian optimisation)
 - [ ] **Curriculum learning**
 - [ ] **Add variations to environment initialization.**

@@ -1,4 +1,5 @@
 import json
+import warnings
 from pathlib import Path
 from typing import Optional
 
@@ -6,8 +7,10 @@ from stable_baselines3 import SAC
 from stable_baselines3.common.logger import configure
 from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.vec_env import DummyVecEnv
+from stable_baselines3.common.utils import check_for_correct_spaces
 
 
+from .checkpoints import checkpoint_path, load_training_model, replay_buffer_path
 from .rl_utils import (
     EvalVideoSaveBestCallback,
     ensure_dirs,
@@ -74,6 +77,9 @@ def train(
     verbose=1,
     tensorboard_log=True,
     total_timesteps=20_000,
+    resume_from=None,
+    replay_buffer_from=None,
+    save_replay_buffer=True,
     eval_every_episodes=10,
     n_eval_episodes=3,
     eval_max_steps=1024,
@@ -81,7 +87,31 @@ def train(
     save_eval_video=True,
     callback_verbose=1,
 ):
+    """Train a new model or continue a checkpoint for additional timesteps.
+
+    resume_from paths are relative to root. On resume, checkpoint architecture
+    and algorithm hyperparameters are retained, while environments, reward,
+    device, logging and evaluation settings come from this call.
+    A matching *_replay_buffer.pkl is restored automatically if present.
+    replay_buffer_from selects an explicit buffer. Without a buffer, collect
+    learning_starts new transitions before updating the pretrained networks.
+    save_replay_buffer controls saving buffers beside both best and last models.
+    TensorBoard starts a new run with cumulative timestep values. Episode
+    counters and best-score selection restart for this training session.
+    """
     root = Path(root)
+    resume_path = checkpoint_path(root, resume_from) if resume_from is not None else None
+    if replay_buffer_from is not None and resume_path is None:
+        raise ValueError("replay_buffer_from requires resume_from.")
+    if learning_starts < 0:
+        raise ValueError("learning_starts must be non-negative.")
+    buffer_path = None
+    if replay_buffer_from is not None:
+        buffer_path = checkpoint_path(root, replay_buffer_from)
+    elif resume_path is not None:
+        candidate = replay_buffer_path(resume_path)
+        if candidate.is_file():
+            buffer_path = candidate
 
     train_env = DummyVecEnv([
         make_env(
@@ -113,54 +143,80 @@ def train(
     run_dir = root / "runs" / run_subdir
     ensure_dirs(model_dir, run_dir)
 
-    policy_kwargs = dict(
-        net_arch=dict(
-            pi=list(pi_layers),
-            qf=list(qf_layers),
-        ),
-        normalize_images=normalize_images,
-    )
+    try:
+        policy_kwargs = dict(
+            net_arch=dict(
+                pi=list(pi_layers),
+                qf=list(qf_layers),
+            ),
+            normalize_images=normalize_images,
+        )
 
-    model = SAC(
-        policy=policy,
-        env=train_env,
-        learning_rate=learning_rate,
-        buffer_size=buffer_size,
-        learning_starts=learning_starts,
-        batch_size=batch_size,
-        tau=tau,
-        gamma=gamma,
-        train_freq=train_freq,
-        gradient_steps=gradient_steps,
-        ent_coef=ent_coef,
-        policy_kwargs=policy_kwargs,
-        verbose=verbose,
-        tensorboard_log=str(run_dir) if tensorboard_log else None,
-        device=device,
-    )
+        if resume_path is not None:
+            model = load_training_model(
+                SAC, resume_path, train_env, device, run_dir, tensorboard_log, verbose,
+            )
+            if buffer_path is not None:
+                model.load_replay_buffer(buffer_path)
+                check_for_correct_spaces(
+                    model.get_env(), model.replay_buffer.observation_space,
+                    model.replay_buffer.action_space,
+                )
+                if model.replay_buffer.n_envs != model.n_envs:
+                    raise ValueError("Replay buffer and training environment counts must match.")
+                model.buffer_size = model.replay_buffer.buffer_size * model.replay_buffer.n_envs
+            else:
+                warnings.warn(
+                    "No SAC replay buffer found. Continuing pretrained networks with an empty "
+                    "buffer and a new learning_starts warmup.", UserWarning,
+                )
+                model.learning_starts = model.num_timesteps + learning_starts
+        else:
+            model = SAC(
+                policy=policy,
+                env=train_env,
+                learning_rate=learning_rate,
+                buffer_size=buffer_size,
+                learning_starts=learning_starts,
+                batch_size=batch_size,
+                tau=tau,
+                gamma=gamma,
+                train_freq=train_freq,
+                gradient_steps=gradient_steps,
+                ent_coef=ent_coef,
+                policy_kwargs=policy_kwargs,
+                verbose=verbose,
+                tensorboard_log=str(run_dir) if tensorboard_log else None,
+                device=device,
+            )
 
-    eval_callback = EvalVideoSaveBestCallback(
-        eval_env=eval_env,
-        best_model_path=model_dir / best_model_name,
-        eval_every_episodes=eval_every_episodes,
-        n_eval_episodes=n_eval_episodes,
-        max_steps=eval_max_steps,
-        deterministic=deterministic_eval,
-        save_video=save_eval_video,
-        verbose=callback_verbose,
-    )
+        eval_callback = EvalVideoSaveBestCallback(
+            eval_env=eval_env,
+            best_model_path=model_dir / best_model_name,
+            eval_every_episodes=eval_every_episodes,
+            n_eval_episodes=n_eval_episodes,
+            max_steps=eval_max_steps,
+            deterministic=deterministic_eval,
+            save_video=save_eval_video,
+            verbose=callback_verbose,
+            save_replay_buffer=save_replay_buffer,
+        )
 
-    model.learn(
-        total_timesteps=total_timesteps,
-        callback=eval_callback,
-    )
+        model.learn(
+            total_timesteps=total_timesteps,
+            callback=eval_callback,
+            reset_num_timesteps=resume_path is None,
+        )
 
-    model_path = model_dir / last_model_name
-    model.save(str(model_path))
-    print(f"Modèle final sauvegardé dans : {model_path}.zip")
+        model_path = model_dir / last_model_name
+        model.save(str(model_path))
+        if save_replay_buffer:
+            model.save_replay_buffer(replay_buffer_path(model_path))
+        print(f"Modèle final sauvegardé dans : {model_path}.zip")
 
-    train_env.close()
-    eval_env.close()
+    finally:
+        train_env.close()
+        eval_env.close()
 
 
 def test(

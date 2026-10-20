@@ -342,6 +342,7 @@ class EvalVideoSaveBestCallback(BaseCallback):
         deterministic=True,
         save_video=True,
         verbose=1,
+        save_replay_buffer=False,
     ):
         super().__init__(verbose)
         self.eval_env = eval_env
@@ -355,6 +356,7 @@ class EvalVideoSaveBestCallback(BaseCallback):
         self.max_steps = max_steps
         self.deterministic = deterministic
         self.save_video = save_video
+        self.save_replay_buffer = save_replay_buffer
 
         self.episode_count = 0
         self.best_mean_reward = -np.inf
@@ -450,6 +452,9 @@ class EvalVideoSaveBestCallback(BaseCallback):
             self.best_task_score = score
             self.best_mean_reward = mean_reward
             self.model.save(str(self.best_model_path))
+            if self.save_replay_buffer:
+                from .checkpoints import replay_buffer_path
+                self.model.save_replay_buffer(replay_buffer_path(self.best_model_path))
 
             if self.verbose:
                 print(

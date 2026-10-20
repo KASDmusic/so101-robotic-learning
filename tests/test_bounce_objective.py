@@ -38,7 +38,9 @@ class EventTests(unittest.TestCase):
         self.model = mujoco.MjModel.from_xml_path(str(FIXTURE))
         self.data = mujoco.MjData(self.model)
         mujoco.mj_forward(self.model, self.data)
-        self.tracker = BounceTracker(self.model, BounceConfig(success_bounces=2))
+        # These short synthetic flights exercise a fixed 20 ms debounce,
+        # independently of the production training defaults.
+        self.tracker = BounceTracker(self.model, BounceConfig(success_bounces=2, min_flight_time=.02))
         self.tracker.reset(self.data)
 
     def bounce(self, start=0., face=True, incoming=-1., outgoing=1., vz=1., point=(0., 0.)):
@@ -144,7 +146,8 @@ class EventTests(unittest.TestCase):
 
 class ObjectiveIntegrationTests(unittest.TestCase):
     def test_substeps_accumulate_events_and_reward_uses_bounces(self):
-        env = BounceEnv(str(FIXTURE), reward=task_reward(), frame_skip=500, bounce_config=BounceConfig(success_bounces=2))
+        env = BounceEnv(str(FIXTURE), reward=task_reward(), frame_skip=500,
+                       bounce_config=BounceConfig(success_bounces=2, min_flight_time=.02))
         try:
             env.reset()
             _, reward, _, _, info = env.step(np.zeros(0, dtype=np.float32))

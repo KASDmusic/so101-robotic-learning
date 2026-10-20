@@ -7,6 +7,7 @@ from stable_baselines3.common.logger import configure
 from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.vec_env import DummyVecEnv, VecTransposeImage
 
+from .checkpoints import checkpoint_path, load_training_model
 from .rl_utils import (
     EvalVideoSaveBestCallback,
     ensure_dirs,
@@ -76,6 +77,7 @@ def train(
     normalize_images=True,
     # Entraînement
     total_timesteps=20_000,
+    resume_from=None,
     # Évaluation / callback
     best_model_name="ppo_bounce_best",
     last_model_name="ppo_bounce_last",
@@ -86,7 +88,16 @@ def train(
     save_eval_video=True,
     callback_verbose=1,
 ):
+    """Train a new model or continue a checkpoint for additional timesteps.
+
+    resume_from paths are relative to root. On resume, checkpoint architecture
+    and algorithm hyperparameters are retained, while environments, reward,
+    device, logging and evaluation settings come from this call.
+    TensorBoard starts a new run with cumulative timestep values. Episode
+    counters and best-score selection restart for this training session.
+    """
     root = Path(root)
+    resume_path = checkpoint_path(root, resume_from) if resume_from is not None else None
 
     train_env = DummyVecEnv([
         make_env(
@@ -119,55 +130,63 @@ def train(
     run_dir = root / "runs" / run_subdir
     ensure_dirs(model_dir, run_dir)
 
-    policy_kwargs = dict(
-        net_arch=dict(
-            pi=list(pi_layers),
-            vf=list(vf_layers),
-        ),
-        normalize_images=normalize_images,
-    )
+    try:
+        policy_kwargs = dict(
+            net_arch=dict(
+                pi=list(pi_layers),
+                vf=list(vf_layers),
+            ),
+            normalize_images=normalize_images,
+        )
 
-    model = PPO(
-        policy=policy,
-        env=train_env,
-        learning_rate=learning_rate,
-        n_steps=n_steps,
-        batch_size=batch_size,
-        n_epochs=n_epochs,
-        gamma=gamma,
-        gae_lambda=gae_lambda,
-        clip_range=clip_range,
-        ent_coef=ent_coef,
-        vf_coef=vf_coef,
-        max_grad_norm=max_grad_norm,
-        policy_kwargs=policy_kwargs,
-        verbose=verbose,
-        tensorboard_log=str(run_dir) if tensorboard_log else None,
-        device=device,
-    )
+        if resume_path is not None:
+            model = load_training_model(
+                PPO, resume_path, train_env, device, run_dir, tensorboard_log, verbose,
+            )
+        else:
+            model = PPO(
+                policy=policy,
+                env=train_env,
+                learning_rate=learning_rate,
+                n_steps=n_steps,
+                batch_size=batch_size,
+                n_epochs=n_epochs,
+                gamma=gamma,
+                gae_lambda=gae_lambda,
+                clip_range=clip_range,
+                ent_coef=ent_coef,
+                vf_coef=vf_coef,
+                max_grad_norm=max_grad_norm,
+                policy_kwargs=policy_kwargs,
+                verbose=verbose,
+                tensorboard_log=str(run_dir) if tensorboard_log else None,
+                device=device,
+            )
 
-    eval_callback = EvalVideoSaveBestCallback(
-        eval_env=eval_env,
-        best_model_path=model_dir / best_model_name,
-        eval_every_episodes=eval_every_episodes,
-        n_eval_episodes=n_eval_episodes,
-        max_steps=eval_max_steps,
-        deterministic=deterministic_eval,
-        save_video=save_eval_video,
-        verbose=callback_verbose,
-    )
+        eval_callback = EvalVideoSaveBestCallback(
+            eval_env=eval_env,
+            best_model_path=model_dir / best_model_name,
+            eval_every_episodes=eval_every_episodes,
+            n_eval_episodes=n_eval_episodes,
+            max_steps=eval_max_steps,
+            deterministic=deterministic_eval,
+            save_video=save_eval_video,
+            verbose=callback_verbose,
+        )
 
-    model.learn(
-        total_timesteps=total_timesteps,
-        callback=eval_callback,
-    )
+        model.learn(
+            total_timesteps=total_timesteps,
+            callback=eval_callback,
+            reset_num_timesteps=resume_path is None,
+        )
 
-    model_path = model_dir / last_model_name
-    model.save(str(model_path))
-    print(f"Modèle final sauvegardé dans : {model_path}.zip")
+        model_path = model_dir / last_model_name
+        model.save(str(model_path))
+        print(f"Modèle final sauvegardé dans : {model_path}.zip")
 
-    train_env.close()
-    eval_env.close()
+    finally:
+        train_env.close()
+        eval_env.close()
 
 
 def test(

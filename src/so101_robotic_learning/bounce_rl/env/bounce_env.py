@@ -93,6 +93,7 @@ class BounceEnv(gym.Env):
         self.curriculum_training = bool(curriculum_training)
         self._curriculum_level = 0
         self._curriculum_promoted = False
+        self._survived_max_duration = False
 
         if render_mode is not None and render_mode not in self.metadata["render_modes"]:
             raise ValueError(
@@ -363,10 +364,19 @@ class BounceEnv(gym.Env):
             "reward_components": dict(self._episode_reward_components),
         })
         if self.gravity_curriculum is not None:
+            bounce_success = self.bounce_tracker.max_consecutive >= self.gravity_curriculum.config.success_bounces
+            survival_success = self.gravity_curriculum.config.success_on_timeout and self._survived_max_duration
             metrics.update({
                 "gravity_m_s2": float(-self.model.opt.gravity[2]),
                 "curriculum_level": self._curriculum_level,
                 "curriculum_complete": self._curriculum_level == self.gravity_curriculum.final_level,
+                "bounce_success": metrics["success"],
+                "survived_max_duration": self._survived_max_duration,
+                "curriculum_success": bool(bounce_success or survival_success),
+                "curriculum_success_reason": (
+                    "bounces" if bounce_success else "max_duration" if survival_success else None
+                ),
+                "success": bool(bounce_success or survival_success),
             })
         return metrics
 
@@ -375,6 +385,13 @@ class BounceEnv(gym.Env):
             self._curriculum_level = self.gravity_curriculum.level
             self.model.opt.gravity[:] = (0.0, 0.0, -self.gravity_curriculum.gravity)
         self._curriculum_promoted = False
+        self._survived_max_duration = False
+
+    def _advance_gravity_on_success(self):
+        if (self.gravity_curriculum is not None and self.curriculum_training
+                and not self._curriculum_promoted):
+            self.gravity_curriculum.advance(self._curriculum_level)
+            self._curriculum_promoted = True
 
     def _get_past_state(self, lag: int) -> np.ndarray:
         # lag=1 => step précédent, donc élément [-1]
@@ -493,11 +510,9 @@ class BounceEnv(gym.Env):
             event = self.bounce_tracker.update(before, self.bounce_tracker.sample(self.data))
             if event is not None:
                 bounce_events.append(event)
-                if (self.gravity_curriculum is not None and self.curriculum_training
-                        and not self._curriculum_promoted
+                if (self.gravity_curriculum is not None
                         and self.bounce_tracker.consecutive >= self.gravity_curriculum.config.success_bounces):
-                    self.gravity_curriculum.advance(self._curriculum_level)
-                    self._curriculum_promoted = True
+                    self._advance_gravity_on_success()
             if self.render_profile != "train_fast":
                 self._maybe_update_camera()
             if self.bounce_tracker.termination_reason is not None:
@@ -530,6 +545,12 @@ class BounceEnv(gym.Env):
         if self.step_count >= self.max_episode_steps:
             truncated = True
             self.step_count = 0
+            # Only the environment's full horizon qualifies, never an evaluation
+            # step cap or a failure occurring on the final physics step.
+            self._survived_max_duration = not terminated
+            if (self._survived_max_duration and self.gravity_curriculum is not None
+                    and self.gravity_curriculum.config.success_on_timeout):
+                self._advance_gravity_on_success()
 
         context = RewardContext(
             bounce_count=len(bounce_events), failed=terminated, energy_j=energy_step_j,

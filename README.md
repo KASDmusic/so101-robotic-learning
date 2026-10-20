@@ -13,7 +13,7 @@
   - **Energy penalty**: integrate absolute actuator mechanical work at every physics substep. Configurable weight, enabled at `0.01` in PPO/SAC notebooks, with episode totals and penalties logged in TensorBoard.
   - **Ball alignment penalty**: penalize distance to the nearest point on a vertical segment from 0.2 m to 1.2 m above `paddle_face`. Integrate over simulated time and expose configuration and metrics in PPO/SAC notebooks and TensorBoard.
   - **Composite rewards**: `RewardMultiObjectif` combines named weighted rewards, penalties and nested composites. Existing rewards remain compatible. Per-component contributions are available in episode reports and TensorBoard.
-  - **Gravity curriculum**: optional PPO/SAC progression from 3 to 9.81 m/s², advancing after 5 consecutive training bounces. Stages apply at reset, are shared across workers and persist beside checkpoints. Evaluation is read-only.
+  - **Gravity curriculum**: optional PPO/SAC progression from 3 to 9.81 m/s², advancing after 5 consecutive training bounces or survival to the full episode horizon without failure. Stages apply at reset, are shared across workers and persist beside checkpoints. Evaluation is read-only.
   - **Hyperparameter search**: optional Optuna grid, TPE and Gaussian-process searches for PPO/SAC, with a dedicated notebook, resumable SQLite studies and JSON/CSV exports. Existing training notebooks are preserved.
   - **Resume training**: PPO/SAC accept `resume_from`. Continue timestep counters in a new TensorBoard run. SAC saves and restores replay buffers beside best and last checkpoints.
   - **Unified reward API**: `reward` defines the full objective everywhere. Weights live in the composite, and geometric settings stay in `env_kwargs`. PPO/SAC notebooks and policy tests share the same configured reward.
@@ -24,7 +24,7 @@
   - **Cameras**: external view reserved for visualization, gripper view retained for the agent, and synchronized GIFs of both views with a single slider. MP4 exports removed, including during tests.
   - **Updated notebooks**: current configurations, robust paths, dated runs, and old outputs cleared.
   - **Faster rendering**: `train_fast` profile, one frame per decision, and external camera limited to the recorded episode. Physics unchanged. Local speedup of approximately **6×**, excluding neural network training.
-  - **Validation**: **96 tests pass**, covering gravity curriculum stages and resumption, grid/TPE/GP searches, study resumption and pruning, checkpoint resumption, replay buffers, composite objectives, penalties, episode termination, notebooks and TensorBoard files.
+  - **Validation**: **99 tests pass**, covering gravity curriculum stages, full-horizon survival and resumption, grid/TPE/GP searches, study resumption and pruning, checkpoint resumption, replay buffers, composite objectives, penalties, episode termination, notebooks and TensorBoard files.
 <!---
 
 ## Arborescence
@@ -138,14 +138,18 @@ train_config["gravity_curriculum"] = GravityCurriculumConfig(
     gravity_step=1.0,
     target_gravity=9.81,
     success_bounces=5,
+    success_on_timeout=True,
 )
 ```
 
 Les valeurs sont des intensités positives en m/s². La gravité globale de MuJoCo est
 `(0, 0, -g)`, pour la balle comme pour le robot.
 La progression par défaut est `3 → 4 → 5 → 6 → 7 → 8 → 9 → 9.81`.
-Un environnement d’entraînement doit atteindre 5 rebonds consécutifs validés au palier courant
-pour programmer le suivant. Les contacts bruts ou le total de rebonds non consécutifs ne suffisent pas.
+Un environnement d’entraînement programme le palier suivant après 5 rebonds consécutifs validés,
+ou s’il survit jusqu’à `max_episode_steps` sans chute, contact raquette-sol ni éloignement excessif.
+Les contacts bruts ou le total de rebonds non consécutifs ne suffisent pas pour le critère de rebonds.
+`success_on_timeout=True` active le critère de survie par défaut. Mettre `False` pour demander
+uniquement les rebonds. Un échec au dernier pas empêche la validation par survie.
 Un épisode ne fait progresser qu’un palier, même s’il dépasse ensuite 10 ou 15 rebonds.
 La gravité reste constante pendant l’épisode et change au prochain reset, sans provoquer
 un reset supplémentaire à la réussite. La progression s’arrête à la gravité cible.
@@ -153,6 +157,9 @@ un reset supplémentaire à la réussite. La progression s’arrête à la gravi
 Les workers `DummyVecEnv` partagent la progression. Les succès d’épisodes encore en cours à un
 ancien palier ne peuvent pas sauter de paliers. Chaque worker rejoint le palier courant à son reset.
 Les évaluations et tests de politique utilisent le palier sauvegardé ou courant sans le faire avancer.
+Avec le curriculum actif, leur `success_rate` compte les rebonds ou la survie complète.
+Une évaluation limitée par `eval_max_steps` avant la vraie limite de l’environnement ne valide pas
+la survie. Le temps avant une éventuelle chute reste censuré à cette limite.
 Les meilleurs checkpoints sont sélectionnés d’abord par palier, puis selon les métriques de jonglage.
 Cela permet à un modèle évalué à une gravité plus élevée de remplacer un checkpoint de niveau facile.
 
@@ -164,7 +171,10 @@ un nouveau curriculum en fournissant `GravityCurriculumConfig(...)`.
 
 TensorBoard enregistre `curriculum/train_gravity_m_s2` (gravité réellement utilisée),
 `curriculum/next_gravity_m_s2` (palier programmé), `curriculum/level`, `curriculum/complete`
-et `eval/mean_gravity_m_s2`. Les rapports contiennent aussi le palier et la gravité des épisodes.
+et `eval/mean_gravity_m_s2`. `eval/max_duration_survival_rate` distingue les épisodes ayant survécu,
+`eval/bounce_success_rate` suit la réussite en rebonds et `eval/curriculum_success_rate` suit
+la réussite combinée. Les rapports détaillent aussi `curriculum_success_reason` (`bounces` ou
+`max_duration`), le palier et la gravité des épisodes.
 Le buffer SAC est conservé entre les paliers. La recherche d’hyperparamètres demande une gravité
 fixe, donc `gravity_curriculum=None`, pour comparer les configurations sur une tâche identique.
 

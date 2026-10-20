@@ -312,6 +312,9 @@ def summarize_task_metrics(episodes):
     if any("gravity_m_s2" in episode for episode in measured):
         summary.update({"mean_gravity_m_s2": mean("gravity_m_s2"),
                         "mean_curriculum_level": mean("curriculum_level"),
+                        "curriculum_success_rate": mean("curriculum_success"),
+                        "max_duration_survival_rate": mean("survived_max_duration"),
+                        "bounce_success_rate": mean("bounce_success"),
                         "curriculum_complete_rate": mean("curriculum_complete")})
     return summary
 

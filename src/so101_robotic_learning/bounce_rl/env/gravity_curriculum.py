@@ -11,6 +11,7 @@ class GravityCurriculumConfig:
     gravity_step: float = 1.0
     target_gravity: float = 9.81
     success_bounces: int = 5
+    success_on_timeout: bool = True
 
     def __post_init__(self):
         for name in ("start_gravity", "gravity_step", "target_gravity"):
@@ -20,6 +21,8 @@ class GravityCurriculumConfig:
             raise ValueError("start_gravity must not exceed target_gravity.")
         if type(self.success_bounces) is not int or self.success_bounces < 1:
             raise ValueError("success_bounces must be a positive integer.")
+        if type(self.success_on_timeout) is not bool:
+            raise ValueError("success_on_timeout must be a boolean.")
 
 
 class GravityCurriculum:

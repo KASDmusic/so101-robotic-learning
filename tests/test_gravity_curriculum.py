@@ -17,6 +17,7 @@ from so101_robotic_learning.bounce_rl.env.gravity_curriculum import (
     save_gravity_curriculum,
 )
 from so101_robotic_learning.bounce_rl.rl import train_ppo, train_sac
+from so101_robotic_learning.bounce_rl.rl.rl_utils import evaluate_policy_on_env
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -46,7 +47,8 @@ class GravityCurriculumTests(unittest.TestCase):
     def test_config_validation_and_exact_cap(self):
         for settings in ({"start_gravity": 0}, {"gravity_step": -1},
                          {"target_gravity": float("nan")}, {"start_gravity": 10},
-                         {"success_bounces": 0}, {"success_bounces": True}):
+                         {"success_bounces": 0}, {"success_bounces": True},
+                         {"success_on_timeout": 1}):
             with self.subTest(settings=settings), self.assertRaises(ValueError):
                 GravityCurriculumConfig(**settings)
         curriculum = GravityCurriculum()
@@ -127,6 +129,74 @@ class GravityCurriculumTests(unittest.TestCase):
         finally:
             ordinary.close()
             staged.close()
+
+    def test_full_horizon_validates_evaluation_but_short_evaluation_cap_does_not(self):
+        curriculum = GravityCurriculum()
+        evaluation = DummyVecEnv([lambda: self.env(curriculum, training=False, max_episode_steps=2)])
+        class ZeroPolicy:
+            def predict(self, obs, deterministic=True):
+                return np.zeros((obs["state"].shape[0], 0)), None
+        try:
+            short = evaluate_policy_on_env(ZeroPolicy(), evaluation, n_eval_episodes=1, max_steps=1)
+            self.assertEqual(short["task_metrics"]["success_rate"], 0.)
+            self.assertEqual(short["task_metrics"]["max_duration_survival_rate"], 0.)
+            full = evaluate_policy_on_env(ZeroPolicy(), evaluation, n_eval_episodes=1, max_steps=2)
+            self.assertEqual(full["task_metrics"]["success_rate"], 1.)
+            self.assertEqual(full["task_metrics"]["curriculum_success_rate"], 1.)
+            self.assertEqual(full["task_metrics"]["max_duration_survival_rate"], 1.)
+            self.assertEqual(full["task_metrics"]["bounce_success_rate"], 0.)
+            self.assertEqual(full["episode_metrics"][0]["curriculum_success_reason"], "max_duration")
+            self.assertEqual(curriculum.level, 0)  # Evaluations remain read-only.
+        finally:
+            evaluation.close()
+
+    def test_training_survival_advances_once_and_preserves_terminal_metrics_before_reset(self):
+        curriculum = GravityCurriculum()
+        env = DummyVecEnv([lambda: self.env(curriculum, max_episode_steps=1) for _ in range(2)])
+        try:
+            env.reset()
+            _, _, dones, infos = env.step(np.zeros((2, 0)))
+            self.assertTrue(all(dones))
+            self.assertEqual(curriculum.level, 1)
+            for info, worker in zip(infos, env.envs):
+                self.assertTrue(info["task_metrics"]["survived_max_duration"])
+                self.assertTrue(info["task_metrics"]["success"])
+                self.assertEqual(info["task_metrics"]["gravity_m_s2"], 3.)
+                self.assertEqual(worker.unwrapped.model.opt.gravity[2], -4.)
+                self.assertFalse(worker.unwrapped._task_metrics()["survived_max_duration"])
+        finally:
+            env.close()
+        strict = GravityCurriculum(GravityCurriculumConfig(success_on_timeout=False))
+        env = self.env(strict, max_episode_steps=1)
+        try:
+            env.reset()
+            _, _, _, truncated, info = env.step(np.zeros(0))
+            self.assertTrue(truncated)
+            self.assertTrue(info["task_metrics"]["survived_max_duration"])
+            self.assertFalse(info["task_metrics"]["success"])
+            self.assertEqual(strict.level, 0)
+        finally:
+            env.close()
+
+    def test_failure_on_final_step_does_not_validate_survival(self):
+        for reason in ("ball_fell", "paddle_ground_contact", "ball_too_far"):
+            with self.subTest(reason=reason):
+                curriculum = GravityCurriculum()
+                env = self.env(curriculum, max_episode_steps=1)
+                def fail(tracker, before, after):
+                    tracker.termination_reason = reason
+                    return None
+                try:
+                    env.reset()
+                    with patch.object(BounceTracker, "update", fail):
+                        _, _, terminated, truncated, info = env.step(np.zeros(0))
+                    self.assertTrue(terminated)
+                    self.assertTrue(truncated)
+                    self.assertFalse(info["task_metrics"]["survived_max_duration"])
+                    self.assertFalse(info["task_metrics"]["curriculum_success"])
+                    self.assertEqual(curriculum.level, 0)
+                finally:
+                    env.close()
 
     def test_sidecar_restores_stage_and_rejects_mismatched_configuration(self):
         with tempfile.TemporaryDirectory() as tmp:

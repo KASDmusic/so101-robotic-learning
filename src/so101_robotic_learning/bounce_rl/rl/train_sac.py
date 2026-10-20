@@ -78,9 +78,13 @@ def train(
     tensorboard_log=True,
     total_timesteps=20_000,
     resume_from=None,
+    seed=None,
     replay_buffer_from=None,
     save_replay_buffer=True,
     eval_every_episodes=10,
+    eval_every_timesteps=None,
+    evaluation_hook=None,
+    evaluate_at_end=False,
     n_eval_episodes=3,
     eval_max_steps=1024,
     deterministic_eval=True,
@@ -98,6 +102,9 @@ def train(
     save_replay_buffer controls saving buffers beside both best and last models.
     TensorBoard starts a new run with cumulative timestep values. Episode
     counters and best-score selection restart for this training session.
+    Optional timestep-based evaluations override the episode schedule.
+    evaluate_at_end evaluates the final updated policy and returns its metrics.
+    seed controls fresh training and uses seed + 10_000 for evaluation.
     """
     root = Path(root)
     resume_path = checkpoint_path(root, resume_from) if resume_from is not None else None
@@ -143,6 +150,7 @@ def train(
     run_dir = root / "runs" / run_subdir
     ensure_dirs(model_dir, run_dir)
 
+    model = None
     try:
         policy_kwargs = dict(
             net_arch=dict(
@@ -176,6 +184,7 @@ def train(
                 policy=policy,
                 env=train_env,
                 learning_rate=learning_rate,
+                seed=seed,
                 buffer_size=buffer_size,
                 learning_starts=learning_starts,
                 batch_size=batch_size,
@@ -199,6 +208,10 @@ def train(
             deterministic=deterministic_eval,
             save_video=save_eval_video,
             verbose=callback_verbose,
+            eval_every_timesteps=eval_every_timesteps,
+            evaluation_hook=evaluation_hook,
+            evaluate_at_end=evaluate_at_end,
+            eval_seed=None if seed is None else seed + 10_000,
             save_replay_buffer=save_replay_buffer,
         )
 
@@ -213,10 +226,13 @@ def train(
         if save_replay_buffer:
             model.save_replay_buffer(replay_buffer_path(model_path))
         print(f"Modèle final sauvegardé dans : {model_path}.zip")
+        return eval_callback.last_result
 
     finally:
         train_env.close()
         eval_env.close()
+        if model is not None and hasattr(model, "_logger"):
+            model.logger.close()
 
 
 def test(

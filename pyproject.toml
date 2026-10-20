@@ -23,10 +23,16 @@ dependencies = [
     "stable_baselines3",
     "tensorboard",
     "ipykernel",
+    "optuna>=4,<5",
+    "sqlalchemy>=1.4.2,<3",
 ]
 
 [tool.setuptools]
 package-dir = {"" = "src"}
+
+[project.optional-dependencies]
+# Compatibility with existing installation commands. HPO is included by default.
+hpo = []
 
 [tool.setuptools.packages.find]
 where = ["src"]

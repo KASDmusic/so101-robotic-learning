@@ -13,6 +13,7 @@
   - **Energy penalty**: integrate absolute actuator mechanical work at every physics substep. Configurable weight, enabled at `0.01` in PPO/SAC notebooks, with episode totals and penalties logged in TensorBoard.
   - **Ball alignment penalty**: penalize distance to the nearest point on a vertical segment from 0.2 m to 1.2 m above `paddle_face`. Integrate over simulated time and expose configuration and metrics in PPO/SAC notebooks and TensorBoard.
   - **Composite rewards**: `RewardMultiObjectif` combines named weighted rewards, penalties and nested composites. Existing rewards remain compatible. Per-component contributions are available in episode reports and TensorBoard.
+  - **Hyperparameter search**: optional Optuna grid, TPE and Gaussian-process searches for PPO/SAC, with a dedicated notebook, resumable SQLite studies and JSON/CSV exports. Existing training notebooks are preserved.
   - **Resume training**: PPO/SAC accept `resume_from`. Continue timestep counters in a new TensorBoard run. SAC saves and restores replay buffers beside best and last checkpoints.
   - **Unified reward API**: `reward` defines the full objective everywhere. Weights live in the composite, and geometric settings stay in `env_kwargs`. PPO/SAC notebooks and policy tests share the same configured reward.
   - **Corrected rewards**: computation without modifying the physics, local `paddle_face` frame, active face only, and a shared default reward for PPO/SAC.
@@ -22,7 +23,7 @@
   - **Cameras**: external view reserved for visualization, gripper view retained for the agent, and synchronized GIFs of both views with a single slider. MP4 exports removed, including during tests.
   - **Updated notebooks**: current configurations, robust paths, dated runs, and old outputs cleared.
   - **Faster rendering**: `train_fast` profile, one frame per decision, and external camera limited to the recorded episode. Physics unchanged. Local speedup of approximately **6×**, excluding neural network training.
-  - **Validation**: **83 tests validated**, covering checkpoint resumption, replay buffers, the unified reward API, composite objectives, penalties, episode termination, notebooks and TensorBoard files.
+  - **Validation**: **90 tests pass**, covering grid/TPE/GP searches, study resumption and pruning, checkpoint resumption, replay buffers, composite objectives, penalties, episode termination, notebooks and TensorBoard files.
 <!---
 
 ## Arborescence
@@ -123,6 +124,74 @@ Pour un buffer vide, utiliser une copie du `.zip` sans buffer voisin.
 Les récompenses stockées ne sont pas recalculées si l’objectif change.
 `save_replay_buffer=False` désactive ces sauvegardes, potentiellement volumineuses.
 
+## Recherche d’hyperparamètres (optionnelle)
+
+Installer depuis la racine du dépôt :
+
+```bash
+pip install -e ".[hpo]"
+```
+
+Ouvrir [le notebook de recherche](notebooks/bounce_rl/notebook_hyperparameter_search.ipynb).
+Il complète les notebooks PPO et SAC existants. Choisir `ALGORITHM`, `METHOD`, le budget
+et les paramètres à explorer, puis exécuter les cellules dans l’ordre.
+
+Le même module peut être appelé depuis du Python avec une configuration d’entraînement existante :
+
+```python
+from so101_robotic_learning.bounce_rl.rl.hyperparameter_search import optimize
+
+study = optimize(
+    algorithm="ppo",
+    base_config=train_config,
+    method="grid",  # "tpe", "gp" ou "bayesian" pour un processus gaussien
+    search_space={
+        "learning_rate": [1e-4, 3e-4],
+        "batch_size": [64, 128],
+    },
+    study_name="ppo_grid_essai_01",
+    n_trials=None,
+    eval_every_timesteps=10_000,
+    seed=42,
+)
+print(study.best_params)
+```
+
+Pour TPE/GP, les paramètres peuvent aussi utiliser une distribution continue :
+`{"learning_rate": {"type": "float", "low": 1e-5, "high": 1e-3, "log": True}}`.
+Les distributions entières utilisent `"type": "int"`, avec `low`, `high` et éventuellement `step`.
+`n_steps` et `train_freq` utilisent des listes d’entiers positifs pour conserver un budget commun.
+Sans `search_space`, chaque méthode propose un espace par défaut adapté à PPO ou SAC.
+
+`n_trials=None` parcourt toute la grille restante, ou lance 10 nouveaux essais TPE/GP.
+Un entier indique le nombre maximal d’essais supplémentaires. Les essais sont séquentiels.
+Le budget de transitions est arrondi à une frontière de collecte commune aux configurations.
+Les combinaisons PPO dont le batch ne divise pas le rollout sont écartées sans entraînement.
+La tâche, la reward et la seed restent fixes. `resume_from` doit être `None`.
+Le score maximise `mean_max_consecutive_bounces` sur la politique finale après ses mises à jour.
+Il est distinct du classement habituel du checkpoint `*_best.zip`.
+`pruning=True` active un arrêt anticipé après `pruning_warmup_steps` et les essais initiaux.
+Le pruning est désactivé par défaut. `timeout` limite le démarrage de nouveaux essais,
+sans interrompre un entraînement en cours.
+
+Les résultats sont enregistrés dans `models/<study_name>/` :
+
+- `study.db` pour continuer la recherche avec le même nom et les mêmes paramètres
+- `search_config.json` pour la configuration, la reward et le budget effectif
+- `trials.csv`, `best_params.json` et `best_trial.json` pour les résultats
+- `trial_0000/`, etc., pour les modèles, configurations et rapports d’évaluation
+
+Les logs restent sous `runs/ppo_bounce/<study_name>/` ou `runs/sac_bounce/<study_name>/`.
+Les GIF et les exports de replay buffers sont désactivés pendant la recherche.
+Les essais terminés sont conservés lors d’une reprise. Un essai interrompu ne reprend pas
+son entraînement. Une grille déjà terminée ne relance pas ses combinaisons.
+Une modification du budget, de la tâche ou de l’espace de recherche demande un nouveau nom.
+
+Pour réentraîner avec les meilleurs réglages, fusionner `study.best_params` dans la configuration
+habituelle et utiliser un nouveau dossier daté. La dernière cellule du notebook fournit cet exemple.
+Vérifier les finalistes avec plusieurs seeds. Les états initiaux fixes actuels limitent la mesure
+de robustesse, même en répétant les évaluations.
+
 ## Environnements
 
 ### bounce_rl
@@ -178,7 +247,7 @@ python [script_name].py
     - [x] End the episode if the paddle touches the ground or the ball moves more than 2 m from the paddle.
     - [x] Penalize absolute actuator mechanical work, including braking.
 - [x] **Start training from a pretrained model**
-- [ ] **Run a hyperparameter optimization.** (gridsearch, bayesian optimisation)
+- [x] **Run a hyperparameter optimization.** (gridsearch, bayesian optimisation)
 - [ ] **Curriculum learning**
 - [ ] **Add variations to environment initialization.**
   - [ ] Implement a seeding system.

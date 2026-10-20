@@ -343,6 +343,10 @@ class EvalVideoSaveBestCallback(BaseCallback):
         save_video=True,
         verbose=1,
         save_replay_buffer=False,
+        eval_every_timesteps=None,
+        evaluation_hook=None,
+        eval_seed=None,
+        evaluate_at_end=False,
     ):
         super().__init__(verbose)
         self.eval_env = eval_env
@@ -357,6 +361,14 @@ class EvalVideoSaveBestCallback(BaseCallback):
         self.deterministic = deterministic
         self.save_video = save_video
         self.save_replay_buffer = save_replay_buffer
+        if eval_every_timesteps is not None and eval_every_timesteps < 1:
+            raise ValueError("eval_every_timesteps must be positive.")
+        self.eval_every_timesteps = eval_every_timesteps
+        self.next_eval_timestep = eval_every_timesteps
+        self.evaluation_hook = evaluation_hook
+        self.eval_seed = eval_seed
+        self.evaluate_at_end = evaluate_at_end
+        self.last_result = None
 
         self.episode_count = 0
         self.best_mean_reward = -np.inf
@@ -364,12 +376,19 @@ class EvalVideoSaveBestCallback(BaseCallback):
 
         self.best_model_path.parent.mkdir(parents=True, exist_ok=True)
 
+    def _on_training_start(self):
+        if self.eval_every_timesteps is not None:
+            self.next_eval_timestep = self.model.num_timesteps + self.eval_every_timesteps
+
+    def _on_training_end(self):
+        if self.evaluate_at_end:
+            # PPO's final rollout callback precedes its optimizer update.
+            # Evaluate again here to score the actual final model.
+            self._evaluate_record_and_save(final=True)
+
     def _on_step(self) -> bool:
         dones = self.locals.get("dones")
-        if dones is None:
-            return True
-
-        n_done = int(np.sum(dones))
+        n_done = int(np.sum(dones)) if dones is not None else 0
         if n_done > 0:
             self.episode_count += n_done
 
@@ -379,16 +398,22 @@ class EvalVideoSaveBestCallback(BaseCallback):
                     f"+{n_done} | count={self.episode_count}"
                 )
 
-            if self.episode_count >= self.next_eval_episode:
+            if self.eval_every_timesteps is None and self.episode_count >= self.next_eval_episode:
                 self._evaluate_record_and_save()
                 # Evaluate once even when a vector step crosses several thresholds.
                 self.next_eval_episode = (
                     self.episode_count // self.eval_every_episodes + 1
                 ) * self.eval_every_episodes
 
+        if self.eval_every_timesteps is not None and self.num_timesteps >= self.next_eval_timestep:
+            self._evaluate_record_and_save()
+            self.next_eval_timestep += (
+                (self.num_timesteps - self.next_eval_timestep) // self.eval_every_timesteps + 1
+            ) * self.eval_every_timesteps
+
         return True
 
-    def _evaluate_record_and_save(self):
+    def _evaluate_record_and_save(self, final=False):
         if self.verbose:
             print(
                 f"[Eval] lancement évaluation | "
@@ -396,6 +421,8 @@ class EvalVideoSaveBestCallback(BaseCallback):
                 f"n_eval_episodes={self.n_eval_episodes}"
             )
 
+        if self.eval_seed is not None:
+            self.eval_env.seed(self.eval_seed)
         eval_result = evaluate_policy_on_env(
             model=self.model,
             env=self.eval_env,
@@ -404,6 +431,9 @@ class EvalVideoSaveBestCallback(BaseCallback):
             deterministic=self.deterministic,
             record_video_first_episode=self.save_video,
         )
+        eval_result["training_timesteps"] = self.num_timesteps
+        eval_result["is_final"] = final
+        self.last_result = eval_result
 
         mean_reward = eval_result["mean_reward"]
         std_reward = eval_result["std_reward"]
@@ -433,7 +463,13 @@ class EvalVideoSaveBestCallback(BaseCallback):
             "episodes": eval_result["episode_metrics"],
             "selection_score": list(evaluation_score(eval_result)),
         }
-        report_path = self.best_model_path.parent / f"{self.best_model_path.stem}_eval_{self.episode_count:06d}.json"
+        if self.eval_every_timesteps is not None or final:
+            suffix = "final" if final else "eval"
+            report_name = f"{self.best_model_path.stem}_{suffix}_step_{self.num_timesteps:09d}.json"
+        else:
+            report_name = f"{self.best_model_path.stem}_eval_{self.episode_count:06d}.json"
+        report["is_final"] = final
+        report_path = self.best_model_path.parent / report_name
         report_path.write_text(json.dumps(report, indent=2, allow_nan=False), encoding="utf-8")
 
         if self.verbose:
@@ -462,3 +498,5 @@ class EvalVideoSaveBestCallback(BaseCallback):
                     f"reward {old_best:.3f} -> {self.best_mean_reward:.3f} | "
                     f"modèle sauvegardé dans {self.best_model_path}"
                 )
+        if self.evaluation_hook is not None:
+            self.evaluation_hook(eval_result, self.num_timesteps)

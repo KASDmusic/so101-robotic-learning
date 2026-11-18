@@ -136,6 +136,21 @@ utilise un dossier temporaire. Une évaluation finale est toujours effectuée.
 `--device auto` reprend la sélection automatique utilisée dans les notebooks.
 Pour PPO, le budget doit être un multiple de `--n-envs × --rollout-steps`.
 
+Les modes PPO et SAC détaillent le temps par phase pour chaque essai et comparent les
+médianes de `dummy` et `subproc` :
+
+- `rollouts` : choix des actions, simulation, rendu des observations, transferts entre processus et stockage des transitions.
+- `network updates` : mises à jour du réseau.
+- `evaluations` : simulation d’évaluation, GIFs et écritures associées, y compris les meilleurs checkpoints.
+- `train env startup` et `eval env startup` : création des environnements, y compris le lancement des processus et l’initialisation du rendu.
+- `model init` et `learning setup` : création du modèle, puis préparation de l’apprentissage, dont le premier reset des environnements d’entraînement.
+- `training logs` et `final checkpoint` : écriture des logs hors évaluation et sauvegarde finale.
+- `env shutdown` et `logger shutdown` : fermeture des environnements et des journaux.
+- `unattributed` : reste du temps total sans mesure dédiée. La suppression du dossier temporaire est hors chronomètre.
+
+Une évaluation déclenchée pendant un rollout est comptée uniquement dans `evaluations`.
+Les mesures synchronisent le GPU aux transitions entre phases pour chronométrer les calculs asynchrones.
+
 Dans un script Python, appeler `train()` sous
 `if __name__ == "__main__":`, comme dans les scripts fournis.
 

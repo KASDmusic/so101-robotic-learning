@@ -17,7 +17,7 @@ dependencies = [
     "opencv-python",
     "torch",
     "torchvision",
-    "mujoco",
+    "mujoco>=4",
     "scipy",
     "matplotlib",
     "stable_baselines3",

@@ -53,13 +53,14 @@ class NotebookTests(unittest.TestCase):
                         if "configuration" in cell["metadata"].get("tags", []):
                             if algorithm:
                                 overrides = {
-                                    "total_timesteps": 4, "eval_every_episodes": 1,
+                                    "total_timesteps": 4, "eval_every_timesteps": 2,
                                     "n_eval_episodes": 1, "eval_max_steps": 2,
                                     "device": "cpu", "verbose": 0,
                                     "callback_verbose": 0, "print_spaces": False,
+                                    "vec_env_backend": "subproc", "nb_vec_env_train": 2,
                                 }
                                 if algorithm == "ppo":
-                                    overrides.update(n_steps=4, batch_size=4, n_epochs=1,
+                                    overrides.update(n_steps=2, batch_size=4, n_epochs=1,
                                                      pi_layers=(16,), vf_layers=(16,))
                                 else:
                                     overrides.update(buffer_size=16, learning_starts=100,
@@ -83,6 +84,10 @@ class NotebookTests(unittest.TestCase):
                         "assert 'success_rate' in latest['task_metrics']\n"
                         "assert (model_dir / '" + algorithm + "_bounce_best.zip').is_file()\n"
                         "assert list((run_root / 'runs').rglob('events.out.tfevents.*'))\n"
+                        "from tensorboard.backend.event_processing.event_accumulator import EventAccumulator\n"
+                        "event_file = next((run_root / 'runs').glob('*/" + algorithm.upper() + "_*/events.out.tfevents.*'))\n"
+                        "events = EventAccumulator(str(event_file.parent)).Reload()\n"
+                        "assert 'eval/cameras' in events.Tags()['images']\n"
                         "assert sorted(path.name for path in (run_root / 'runs').iterdir()) == ['" + algorithm + "_bounce']\n"
                     ))
                     if any("optional-test" in c.get("metadata", {}).get("tags", []) for c in notebook["cells"]):

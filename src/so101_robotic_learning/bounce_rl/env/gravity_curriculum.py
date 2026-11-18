@@ -1,7 +1,9 @@
 """Shared gravity stages, advanced by training successes and applied at reset."""
+from contextlib import nullcontext
 from dataclasses import asdict, dataclass
 import json
 import math
+from multiprocessing.reduction import ForkingPickler
 from pathlib import Path
 
 
@@ -26,7 +28,7 @@ class GravityCurriculumConfig:
 
 
 class GravityCurriculum:
-    """One shared state for DummyVecEnv workers, with read-only evaluation."""
+    """One shared stage for training workers, with read-only evaluation."""
 
     def __init__(self, config=None, level=0):
         self.config = config or GravityCurriculumConfig()
@@ -37,23 +39,56 @@ class GravityCurriculum:
         ))
         if type(level) is not int or not 0 <= level <= self.final_level:
             raise ValueError("Invalid gravity curriculum level.")
-        self.level = level
+        self._level = level
+        self._shared_level = None
+
+    def share(self, context):
+        """Share the stage with workers started by this multiprocessing context."""
+        if self._shared_level is None:
+            self._shared_level = context.Value("q", self._level)
+
+    def __getstate__(self):
+        state = self.__dict__.copy()
+        if self._shared_level is not None:
+            # SB3 cloudpickles env factories. Use the multiprocessing reducer
+            # for the counter so its backing memory is shared, not copied.
+            state["_shared_level"] = bytes(ForkingPickler.dumps(self._shared_level))
+        return state
+
+    def __setstate__(self, state):
+        self.__dict__.update(state)
+        if self._shared_level is not None:
+            self._shared_level = ForkingPickler.loads(self._shared_level)
+
+    @property
+    def level(self):
+        return self._level if self._shared_level is None else self._shared_level.value
+
+    def gravity_at(self, level):
+        return min(self.config.start_gravity + level * self.config.gravity_step,
+                   self.config.target_gravity)
 
     @property
     def gravity(self):
-        return min(self.config.start_gravity + self.level * self.config.gravity_step,
-                   self.config.target_gravity)
+        return self.gravity_at(self.level)
 
     def advance(self, episode_level):
         # Successes from workers still running an easier stage cannot skip stages.
-        if episode_level != self.level or self.level >= self.final_level:
-            return False
-        self.level += 1
-        return True
+        shared = self._shared_level
+        with shared.get_lock() if shared is not None else nullcontext():
+            level = self.level
+            if episode_level != level or level >= self.final_level:
+                return False
+            if shared is None:
+                self._level = level + 1
+            else:
+                shared.value = level + 1
+            return True
 
     def state(self):
-        return {"config": asdict(self.config), "level": self.level,
-                "gravity_m_s2": self.gravity, "complete": self.level == self.final_level}
+        level = self.level
+        return {"config": asdict(self.config), "level": level,
+                "gravity_m_s2": self.gravity_at(level), "complete": level == self.final_level}
 
     def save(self, model_path):
         path = curriculum_path(model_path)

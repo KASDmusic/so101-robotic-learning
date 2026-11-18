@@ -1,3 +1,4 @@
+from contextlib import ExitStack
 import json
 from pathlib import Path
 from typing import Optional
@@ -9,6 +10,7 @@ from stable_baselines3.common.vec_env import DummyVecEnv, VecTransposeImage
 
 from ..env.gravity_curriculum import make_gravity_curriculum, save_gravity_curriculum
 from .checkpoints import checkpoint_path, load_training_model
+from .vector_env import make_training_vec_env
 from .rl_utils import (
     EvalVideoSaveBestCallback,
     ensure_dirs,
@@ -51,6 +53,7 @@ def train(
     # Environnement
     nb_vec_env_train=1,
     nb_vec_env_test=1,
+    vec_env_backend="dummy",
     env_kwargs=None,
     train_render_mode=None,
     eval_render_mode="rgb_array_list",
@@ -108,6 +111,8 @@ def train(
     Optional timestep-based evaluations override the episode schedule.
     evaluate_at_end evaluates the final updated policy and returns its metrics.
     seed controls fresh training and uses seed + 10_000 for evaluation.
+    vec_env_backend="subproc" runs training environments in separate processes.
+    Evaluation environments always run locally.
     gravity_curriculum opts into staged gravity, shared across training workers.
     Evaluation never advances it. Stages apply at reset and resume from the
     *_curriculum.json file saved beside best/last checkpoints.
@@ -117,42 +122,44 @@ def train(
 
     curriculum = make_gravity_curriculum(gravity_curriculum, resume_path)
 
-    train_env = DummyVecEnv([
-        make_env(
-            xml_path=xml_path,
-            render_mode=train_render_mode,
-            env_kwargs=env_kwargs,
-            reward=reward,
-            gravity_curriculum=curriculum,
-        )
-        for _ in range(nb_vec_env_train)
-    ])
-    eval_env = DummyVecEnv([
-        make_env(
-            xml_path=xml_path,
-            render_mode=eval_render_mode,
-            env_kwargs=env_kwargs,
-            reward=reward,
-            gravity_curriculum=curriculum,
-            record_video=save_eval_video,
-            curriculum_training=False,
-        )
-        for _ in range(nb_vec_env_test)
-    ])
-
-    if use_vec_transpose_image:
-        train_env = VecTransposeImage(train_env)
-        eval_env = VecTransposeImage(eval_env)
-
-    if print_spaces:
-        print_env_spaces(train_env)
-
-    model_dir = root / model_dir_name
-    run_dir = root / "runs" / run_subdir
-    ensure_dirs(model_dir, run_dir)
-
+    resources = ExitStack()
     model = None
     try:
+        train_env = make_training_vec_env([
+            make_env(
+                xml_path=xml_path,
+                render_mode=train_render_mode,
+                env_kwargs=env_kwargs,
+                reward=reward,
+                gravity_curriculum=curriculum,
+            )
+            for _ in range(nb_vec_env_train)
+        ], backend=vec_env_backend, render_mode=train_render_mode, curriculum=curriculum, resources=resources)
+        eval_env = DummyVecEnv([
+            make_env(
+                xml_path=xml_path,
+                render_mode=eval_render_mode,
+                env_kwargs=env_kwargs,
+                reward=reward,
+                gravity_curriculum=curriculum,
+                record_video=save_eval_video,
+                curriculum_training=False,
+            )
+            for _ in range(nb_vec_env_test)
+        ])
+        resources.callback(eval_env.close)
+
+        if use_vec_transpose_image:
+            train_env = VecTransposeImage(train_env)
+            eval_env = VecTransposeImage(eval_env)
+
+        if print_spaces:
+            print_env_spaces(train_env)
+
+        model_dir = root / model_dir_name
+        run_dir = root / "runs" / run_subdir
+        ensure_dirs(model_dir, run_dir)
+
         policy_kwargs = dict(
             net_arch=dict(
                 pi=list(pi_layers),
@@ -215,8 +222,7 @@ def train(
         return eval_callback.last_result
 
     finally:
-        train_env.close()
-        eval_env.close()
+        resources.close()
         if model is not None and hasattr(model, "_logger"):
             model.logger.close()
 

@@ -83,8 +83,10 @@ class BounceEnv(gym.Env):
         ball_segment_length: float = 1.0,
         gravity_curriculum: GravityCurriculum | GravityCurriculumConfig | None = None,
         curriculum_training: bool = True,
+        log_step_timing: bool = True,
     ):
         super().__init__()
+        self.log_step_timing = log_step_timing
         if isinstance(gravity_curriculum, GravityCurriculumConfig):
             gravity_curriculum = GravityCurriculum(gravity_curriculum)
         if gravity_curriculum is not None and not isinstance(gravity_curriculum, GravityCurriculum):
@@ -383,7 +385,7 @@ class BounceEnv(gym.Env):
     def _apply_gravity_curriculum(self):
         if self.gravity_curriculum is not None:
             self._curriculum_level = self.gravity_curriculum.level
-            self.model.opt.gravity[:] = (0.0, 0.0, -self.gravity_curriculum.gravity)
+            self.model.opt.gravity[:] = (0.0, 0.0, -self.gravity_curriculum.gravity_at(self._curriculum_level))
         self._curriculum_promoted = False
         self._survived_max_duration = False
 
@@ -479,7 +481,7 @@ class BounceEnv(gym.Env):
 
     def step(self, action):
         self.step_count += 1
-        t0 = time.time()
+        t0 = time.perf_counter() if self.log_step_timing else None
 
         ctrl_range = self.model.actuator_ctrlrange
         actions_rescaled = np.clip(action, -1, 1)
@@ -592,7 +594,8 @@ class BounceEnv(gym.Env):
             info["terminal_render_frames"] = self._rendered_frames.copy()
             info["terminal_observation_frames"] = self._observation_frames.copy()
 
-        print(f"[Step] time={time.time() - t0:.3f}s | reward={reward:.3f}")
+        if t0 is not None:
+            print(f"[Step] time={time.perf_counter() - t0:.3f}s | reward={reward:.3f}")
         return obs, reward, terminated, truncated, info
 
     def pop_render_frames(self):

@@ -14,6 +14,7 @@
   - **Ball alignment penalty**: penalize distance to the nearest point on a vertical segment from 0.2 m to 1.2 m above `paddle_face`. Integrate over simulated time and expose configuration and metrics in PPO/SAC notebooks and TensorBoard.
   - **Composite rewards**: `RewardMultiObjectif` combines named weighted rewards, penalties and nested composites. Existing rewards remain compatible. Per-component contributions are available in episode reports and TensorBoard.
   - **Gravity curriculum**: optional PPO/SAC progression from 3 to 9.81 m/s², advancing after 5 consecutive training bounces or survival to the full episode horizon without failure. Stages apply at reset, are shared across workers and persist beside checkpoints. Evaluation is read-only.
+  - **Parallel training environments**: optional `SubprocVecEnv` for PPO/SAC, with shared gravity stages and local evaluation GIFs.
   - **Hyperparameter search**: optional Optuna grid, TPE and Gaussian-process searches for PPO/SAC, with a dedicated notebook, resumable SQLite studies and JSON/CSV exports. Existing training notebooks are preserved.
   - **Resume training**: PPO/SAC accept `resume_from`. Continue timestep counters in a new TensorBoard run. SAC saves and restores replay buffers beside best and last checkpoints.
   - **Unified reward API**: `reward` defines the full objective everywhere. Weights live in the composite, and geometric settings stay in `env_kwargs`. PPO/SAC notebooks and policy tests share the same configured reward.
@@ -24,7 +25,7 @@
   - **Cameras**: external view reserved for visualization, gripper view retained for the agent, and synchronized GIFs of both views with a single slider. MP4 exports removed, including during tests.
   - **Updated notebooks**: current configurations, robust paths, dated runs, and old outputs cleared.
   - **Faster rendering**: `train_fast` profile, one frame per decision, and external camera limited to the recorded episode. Physics unchanged. Local speedup of approximately **6×**, excluding neural network training.
-  - **Validation**: **99 tests pass**, covering gravity curriculum stages, full-horizon survival and resumption, grid/TPE/GP searches, study resumption and pruning, checkpoint resumption, replay buffers, composite objectives, penalties, episode termination, notebooks and TensorBoard files.
+  - **Validation**: **100 tests pass**, covering parallel PPO/SAC training, shared gravity stages, full-horizon survival and resumption, grid/TPE/GP searches, study resumption and pruning, checkpoint resumption, replay buffers, composite objectives, penalties, episode termination, notebooks and TensorBoard files.
 <!---
 
 ## Arborescence
@@ -93,6 +94,51 @@ conda env create -f environment.yml
 conda activate so101-robotic-learning
 ```
 
+## Paralléliser les environnements PPO et SAC
+
+Dans le dictionnaire `train_config` du notebook :
+
+```python
+train_config["vec_env_backend"] = "subproc"
+train_config["nb_vec_env_train"] = 5
+train_config["train_render_mode"] = None
+```
+
+`"subproc"` lance un processus par environnement d’entraînement. Chacun exécute sa
+boucle MuJoCo, avec les mêmes contrôles de rebond et de fin d’épisode à chaque sous-pas.
+`"dummy"` reste le mode par défaut et exécute les environnements en série.
+
+Les observations caméra restent actives dans les processus. Les évaluations et les GIFs
+TensorBoard restent gérés dans le processus principal. Le viewer interactif est disponible
+pour l’évaluation, pas pour les processus d’entraînement.
+
+Pour mesurer le temps de collecte à nombre de transitions égal :
+
+```bash
+python scripts/bounce_rl/benchmark_vec_env.py --n-envs 5 --steps 1000 --repeats 3
+```
+
+Chaque mode effectue 200 appels au `step` vectoriel, soit 1 000 transitions avec 5 environnements.
+Le script compare les temps médians, hors initialisation et échauffement. Il conserve
+le rendu des observations et exclut l’apprentissage du réseau et les évaluations.
+Le démarrage est chronométré séparément.
+
+Pour comparer des entraînements complets, utiliser `--mode ppo` ou `--mode sac` :
+
+```bash
+python scripts/bounce_rl/benchmark_vec_env.py --mode ppo --n-envs 5 --steps 1000 --repeats 3 --eval-every 500
+```
+
+Le chronomètre inclut le démarrage, le rendu de la caméra d’observation, les mises à jour du
+réseau, les évaluations avec GIFs TensorBoard et la sauvegarde des modèles. Chaque essai
+utilise un dossier temporaire. Une évaluation finale est toujours effectuée.
+`--eval-every` ajoute des évaluations périodiques. Le CPU est utilisé par défaut, et
+`--device auto` reprend la sélection automatique utilisée dans les notebooks.
+Pour PPO, le budget doit être un multiple de `--n-envs × --rollout-steps`.
+
+Dans un script Python, appeler `train()` sous
+`if __name__ == "__main__":`, comme dans les scripts fournis.
+
 ## Reprendre un entraînement PPO ou SAC
 
 Dans le notebook, conserver le nouveau dossier daté et renseigner le checkpoint :
@@ -154,7 +200,7 @@ Un épisode ne fait progresser qu’un palier, même s’il dépasse ensuite 10 
 La gravité reste constante pendant l’épisode et change au prochain reset, sans provoquer
 un reset supplémentaire à la réussite. La progression s’arrête à la gravité cible.
 
-Les workers `DummyVecEnv` partagent la progression. Les succès d’épisodes encore en cours à un
+Les workers partagent la progression avec `DummyVecEnv` et `SubprocVecEnv`. Les succès d’épisodes encore en cours à un
 ancien palier ne peuvent pas sauter de paliers. Chaque worker rejoint le palier courant à son reset.
 Les évaluations et tests de politique utilisent le palier sauvegardé ou courant sans le faire avancer.
 Avec le curriculum actif, leur `success_rate` compte les rebonds ou la survie complète.

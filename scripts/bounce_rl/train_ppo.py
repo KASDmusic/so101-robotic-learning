@@ -3,7 +3,7 @@ from pathlib import Path
 from so101_robotic_learning.bounce_rl.rl import train_ppo
 
 # Paths
-root = Path("../../")
+root = Path(__file__).resolve().parents[2]
 xml_path = root / "assets/mjcf/so101_new_calib copy.xml"
 model_path = root / "models/ppo_bounce_best.zip"
 
@@ -44,11 +44,12 @@ train_ppo.train(
 )
 """
 
-train_ppo.train(
-    xml_path=xml_path,
-    root=root,
-    total_timesteps=50_000,
-    n_steps=128,
-    batch_size=64,
-    nb_vec_env_train=5
-)
+if __name__ == "__main__":
+    train_ppo.train(
+        xml_path=xml_path,
+        root=root,
+        total_timesteps=50_000,
+        n_steps=128,
+        batch_size=64,
+        nb_vec_env_train=5
+    )

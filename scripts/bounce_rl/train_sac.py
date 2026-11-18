@@ -2,7 +2,7 @@ from pathlib import Path
 from so101_robotic_learning.bounce_rl.rl import train_sac
 
 # Paths sécurisés
-root = Path("../../")
+root = Path(__file__).resolve().parents[2]
 xml_path = root / "assets/mjcf/so101_new_calib copy.xml"
 
 model_path = root / "models/sac_bounce_best.zip"
@@ -44,9 +44,10 @@ train_sac.train(
 )
 """
 
-train_sac.train(
-    xml_path=xml_path,
-    root=root,
-    total_timesteps=50_000,
-    batch_size=128,
-)
+if __name__ == "__main__":
+    train_sac.train(
+        xml_path=xml_path,
+        root=root,
+        total_timesteps=50_000,
+        batch_size=128,
+    )

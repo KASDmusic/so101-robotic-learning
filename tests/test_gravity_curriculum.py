@@ -1,5 +1,6 @@
 """Gravity-only stages, shared workers, read-only evaluation and resumed training."""
 import json
+from contextlib import ExitStack
 import tempfile
 import unittest
 from pathlib import Path
@@ -18,6 +19,7 @@ from so101_robotic_learning.bounce_rl.env.gravity_curriculum import (
 )
 from so101_robotic_learning.bounce_rl.rl import train_ppo, train_sac
 from so101_robotic_learning.bounce_rl.rl.rl_utils import evaluate_policy_on_env
+from so101_robotic_learning.bounce_rl.rl.vector_env import make_training_vec_env
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -43,6 +45,28 @@ class GravityCurriculumTests(unittest.TestCase):
         return BounceEnv(str(FIXTURE), gravity_curriculum=curriculum,
                          curriculum_training=training, render_profile="train_fast",
                          frame_skip=1, **kwargs)
+
+    def test_subprocess_workers_share_stage_and_preserve_terminal_info(self):
+        curriculum = GravityCurriculum(GravityCurriculumConfig(start_gravity=7.))
+        with ExitStack() as resources:
+            env = make_training_vec_env(
+                [train_ppo.make_env(FIXTURE, gravity_curriculum=curriculum,
+                                    env_kwargs={"max_episode_steps": 1, "frame_skip": 1})
+                 for _ in range(2)],
+                backend="subproc", render_mode=None, curriculum=curriculum, resources=resources,
+            )
+            self.assertEqual(len({process.pid for process in env.processes}), 2)
+            obs = env.reset()
+            self.assertEqual(obs["image"].shape[0], 2)
+            for level, gravity in enumerate((7., 8.)):
+                _, _, dones, infos = env.step(np.zeros((2, *env.action_space.shape)))
+                self.assertTrue(dones.all())
+                self.assertEqual(curriculum.level, level + 1)
+                for info in infos:
+                    self.assertTrue(info["TimeLimit.truncated"])
+                    self.assertIn("terminal_observation", info)
+                    self.assertEqual(info["task_metrics"]["gravity_m_s2"], gravity)
+        self.assertTrue(all(not process.is_alive() for process in env.processes))
 
     def test_config_validation_and_exact_cap(self):
         for settings in ({"start_gravity": 0}, {"gravity_step": -1},
